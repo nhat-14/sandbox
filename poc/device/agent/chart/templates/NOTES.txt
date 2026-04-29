@@ -1,0 +1,21 @@
+Thank you for installing {{ .Chart.Name }}.
+
+Your release is named {{ .Release.Name }}.
+
+To learn more about the release, try:
+
+  $ helm status {{ .Release.Name }}
+  $ helm get all {{ .Release.Name }}
+
+{{- if .Values.certificates.generate }}
+
+⚠️  Certificate Generation:
+   Certificates will be generated automatically via a pre-install job.
+   The generated certificates will be stored in a Kubernetes Secret.
+{{- end }}
+
+{{- if .Values.kubeconfigPath }}
+
+⚠️  kubeconfig:
+   This deployment mounts the kubeconfig path from the host.
+{{- end }}

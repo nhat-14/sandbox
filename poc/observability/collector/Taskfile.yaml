@@ -1,0 +1,69 @@
+version: "3"
+
+vars:
+  # Defaults for local dev, override via CLI or .env
+  WFM_HOST: "{{.WFM_HOST | default \"127.0.0.1\"}}"
+  # Automatically captures the Host IP exactly like your bash script
+  HOST_IP:
+    sh: hostname -I | awk '{print $1}'
+
+  # --- Directories ---
+  OBS_COMPOSE: "docker-compose.yaml"
+  OBS_CHART: "chart"
+
+  # --- Observability Config ---
+  OBS_NAMESPACE: "observability"
+  OBS_RELEASE: "obs"
+  GRAFANA_PASSWORD: "{{.GRAFANA_PASSWORD}}"
+
+tasks:
+  up:
+    desc: "Start the client-side observability stack (Docker)"
+    summary: |
+      Captures host networking details and starts Promtail + OTEL Collector.
+      Parity with Margo sandbox bash script v1.0.
+    env:
+      WFM_HOST: "{{.WFM_HOST}}"
+      HOST_IP: "{{.HOST_IP}}"
+    cmds:
+      # - docker compose -f docker-compose.yaml --profile init
+      - docker compose -f {{.OBS_COMPOSE}} up -d --remove-orphans
+      - echo "📡 Collectors started. Sending to WFM at {{.WFM_HOST}}"
+
+  down:
+    desc: "Stop and cleanup client collectors"
+    cmds:
+      - docker compose -f {{.OBS_COMPOSE}} down -v
+
+  logs:
+    desc: "Tail logs for the collectors"
+    cmds:
+      - docker compose -f {{.OBS_COMPOSE}} logs -f
+
+  helm-install:
+    desc: "Deploy the consolidated observability Meta-Chart to K8s/K3s"
+    dir: "{{.OBS_CHART}}"
+    cmds:
+      - echo "📦 Updating chart dependencies..."
+      - helm dependency update
+      - echo "🚀 Deploying {{.OBS_RELEASE}} to namespace {{.OBS_NAMESPACE}}..."
+      - |
+        helm upgrade --install {{.OBS_RELEASE}} . \
+          --namespace {{.OBS_NAMESPACE}} \
+          --create-namespace \
+          --set grafana.adminPassword={{.GRAFANA_PASSWORD}} \
+          --values values.yaml \
+          --wait
+
+  uninstall:
+    desc: "Tear down the entire observability stack from K8s"
+    summary: Removes the Helm release and deletes the namespace to ensure a clean state.
+    cmds:
+      - helm uninstall {{.OBS_RELEASE}} --namespace {{.OBS_NAMESPACE}}
+      - kubectl delete namespace {{.OBS_NAMESPACE}} --ignore-not-found
+
+  clean:
+    desc: "Wipe all local artifacts and cloned sources"
+    prompt: "This will delete {{.LOCAL_DIR}}. Are you sure?"
+    cmds:
+      - rm -rf {{.LOCAL_DIR}}

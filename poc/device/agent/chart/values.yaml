@@ -1,0 +1,69 @@
+# Image configuration
+image:
+  repository: ghcr.io/margo/workload-fleet-management-client
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Volume configuration
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 256Mi
+  existingClaim: ""
+
+# Certificate files
+externalCertFiles:
+  wfmCaCrt: ""
+  registryCaCrt: ""
+
+# Device Certificate configuration
+deviceCerts:
+  validityDays: 365
+  clientName: margo-wfm-client
+  # Set to false to skip certificate generation job
+  generate: true
+  # Existing secret name if certificates are pre-created
+  existingSecret: ""
+
+# Cluster kubeconfig
+kubeconfigPath: /root/.kube/config
+
+config:
+  configYaml: |
+
+# Resource limits
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Pod configuration
+podAnnotations: {}
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+# Service account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Node selection
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Restart policy
+restartPolicy: Always

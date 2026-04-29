@@ -1,0 +1,318 @@
+version: "3"
+
+vars:
+  IS_DEBIAN:
+    sh: "command -v apt-get >/dev/null 2>&1 && echo 'true' || echo 'false'"
+
+  # Pinning versions from your script
+  GO_VERSION: "{{.GO_VERSION | default \"1.24.4\"}}"
+  DOCKER_VERSION: "{{.DOCKER_VERSION | default \"28.0.0\"}}"
+  K3S_VERSION: "{{.K3S_VERSION | default \"v1.31.4+k3s1\"}}"
+  KUBECONFIG: "{{joinPath .HOME \".kube/config\"}}"
+  K3S_DATA_DIR: "/etc/rancher/k3s"
+
+tasks:
+  default:
+    desc: "List of commands available"
+    deps: [ os-check ]
+    cmds:
+      - task --list
+
+  os-check:
+    silent: true
+    internal: true
+    preconditions:
+      - sh: "[[ \"{{OS}}\" == \"linux\" ]] && [[ \"{{.IS_DEBIAN}}\" == \"true\" ]]"
+        msg: "❌ This Taskfile only supports Linux distributions with 'apt' (and tested
+          only on Ubuntu as of now)."
+
+  os-deps:
+    silent: true
+    internal: true
+    desc: "Install OS dependencies"
+    deps: [ os-check ]
+    cmds:
+      - sudo apt update && sudo apt install -y curl
+    status:
+      - command -v curl
+
+  install:dev-tools:
+    desc: "Installs development tools on your machine"
+    deps: [ os-deps ]
+    summary: |
+      Bootstraps the local environment with:
+      - Go toolchain (including LSP and Linter)
+      - Helm for Kubernetes package management
+      - Docker for container orchestration
+    cmds:
+      - task: install:gotools
+      # - task: install:linters
+      - task: install:helm
+      - task: install:docker
+
+  uninstall:dev-tools:
+    desc: "Removes the installed development tools from the machine"
+    cmds:
+      - task: uninstall:gotools
+      # - task: uninstall:linters
+      - task: uninstall:helm
+      - task: uninstall:docker
+
+  # --- LINTING AGGREGATOR ---
+  lint:
+    desc: "Runs all linters (Go, YAML, EditorConfig)"
+    cmds:
+      - task: lint:go
+      - task: lint:yaml
+      - task: lint:editorconfig
+
+  lint:go:
+    desc: "Runs golangci-lint using the root .golangci.yaml"
+    deps: [ check:golinter ]
+    cmds:
+      - echo " Linting Go code..."
+      - "{{.GOLINT_BIN}} run ./..."
+
+  lint:yaml:
+    desc: "Lints YAML files (requires yamllint)"
+    deps: [ check:yamllint ]
+    cmds:
+      - echo " Linting YAML files..."
+      - yamllint . 2>/dev/null || yamllint .
+
+  lint:editorconfig:
+    desc: "Verifies files adhere to .editorconfig"
+    deps: [ check:editorconfig-checker ]
+    cmds:
+      - echo " Checking EditorConfig compliance..."
+      - editorconfig-checker
+
+  # --- TOOLSET CHECKS (Internal) ---
+
+  check:golinter:
+    internal: true
+    silent: true
+    vars:
+      GOLINT_BIN: "/usr/local/go/bin/golangci-lint"
+    status:
+      - test -f {{.GOLINT_BIN}}
+
+  check:yamllint:
+    internal: true
+    silent: true
+    status:
+      - command -v yamllint
+
+  check:editorconfig-checker:
+    internal: true
+    silent: true
+    status:
+      - command -v editorconfig-checker
+
+  install:gotools:
+    internal: true
+    vars:
+      GO_VERSION: "{{.GO_VERSION | default \"1.24.7\"}}"
+      GO_BIN: "/usr/local/go/bin/go"
+    status:
+      - test -f {{.GO_BIN}} && {{.GO_BIN}} version | grep -q "{{.GO_VERSION}}"
+      - echo " Installation complete! Run 'export
+        PATH=\$PATH:/usr/local/go/bin' or restart your shell."
+    cmds:
+      - echo " Installing Go {{.GO_VERSION}}..."
+      - curl -L https://go.dev/dl/go{{.GO_VERSION}}.linux-amd64.tar.gz | sudo
+        tar -C /usr/local -xzf -
+      - |
+        # NOTE: need to pin the versions of these tools
+        {{.GO_BIN}} install golang.org/x/tools/gopls@latest
+        {{.GO_BIN}} install github.com/go-delve/delve/cmd/dlv@latest
+        {{.GO_BIN}} install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.1
+        {{.GO_BIN}} install github.com/wasilibs/go-yamllint/cmd/yamllint@latest
+        {{.GO_BIN}} install github.com/editorconfig-checker/editorconfig-checker/v3/cmd/editorconfig-checker@latest
+
+  install:helm:
+    internal: true
+    status:
+      - command -v helm
+    cmds:
+      - curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        | bash
+
+  install:docker:
+    desc: "Production-grade Docker install with version pinning"
+    deps: [ os-check, os-deps ]
+    # BREAK: If a version exists but isn't our pinned one, stop everything.
+    preconditions:
+      - sh: |
+          # 1. If docker is missing, exit 0 (allow install to proceed)
+          if ! command -v docker >/dev/null 2>&1; then
+            exit 0
+          fi
+          # 2. If it exists, check the version
+          CURRENT=$(docker version --format '{{"{{.Client.Version}}"}}' 2>/dev/null | head -n 1)
+          if [ "$CURRENT" != "{{.DOCKER_VERSION}}" ]; then
+            exit 1
+          fi
+        msg: |
+          ❌ VERSION CONFLICT: Found an incompatible Docker version.
+          Please run 'task uninstall:docker' first to clean your system.
+    # SKIP: If the version matches exactly, Task will skip this entire block.
+    status:
+      - |
+        CURRENT=$(docker version --format '{{"{{.Client.Version}}"}}' 2>/dev/null | head -n 1)
+        if [ "$CURRENT" == "{{.DOCKER_VERSION}}" ]; then
+          exit 0
+        fi
+        exit 1
+    cmds:
+      - defer: |
+          rm install-docker.sh
+      - curl -fsSL https://get.docker.com -o install-docker.sh
+      - sh install-docker.sh --dry-run
+      - sudo sh install-docker.sh --version {{.DOCKER_VERSION}} --channel=stable
+      - sudo usermod -aG docker {{.USER}}
+      - sudo apt-mark hold docker-ce docker-ce-cli docker-compose-plugin
+        containerd.io
+      - echo "✅ Docker and Compose are pinned and ready."
+      - |
+        if ! groups | grep -qw "docker"; then
+          echo " User added to 'docker' group. Please start a new shell session so that these changes get picked up!!!!! Quiting this current session now!"
+        fi
+
+  install:k3s:
+    desc: "Install/Upgrade K3s binary"
+    summary: |
+      Executes the end-to-end setup:
+      1. Checks/Installs OS dependencies.
+      2. Installs K3s binary.
+      3. Synchronizes kubeconfig to the local user directory.
+    deps: [ os-deps ]
+    vars:
+      CURRENT_VERSION:
+        sh: k3s --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+\+k3s[0-9]+' |
+          head -1 || echo "none"
+    preconditions:
+      - sh: "sudo -v"
+        msg: "Sudo permissions required."
+      - sh: "sudo ss -tulpn | grep -qv :6443"
+        msg: |
+          Port 6443 is already in use. If you used this installer to install k3s,
+          then please run 'task uninstall:k3s', or consult system admin to debug.
+    cmds:
+      - |
+        if [ "{{.CURRENT_VERSION}}" != "none" ] && [ "{{.CURRENT_VERSION}}" != "{{.K3S_VERSION}}" ]; then
+          echo "⚠️  Version mismatch! Current: {{.CURRENT_VERSION}}, Expected: {{.K3S_VERSION}}"
+          echo "ℹ️  K3s will attempt an in-place installation/upgrade."
+        fi
+      - curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{.K3S_VERSION}}"
+        K3S_KUBECONFIG_MODE="644" INSTALL_K3S_EXEC="server --disable traefik" sh
+        -
+      - sudo systemctl daemon-reload
+      - sudo systemctl enable --now k3s
+      - task: kubeconfig
+    status:
+      - test "{{.CURRENT_VERSION}}" == "{{.K3S_VERSION}}"
+      - sudo systemctl is-active --quiet k3s
+
+  uninstall:gotools:
+    internal: true
+    cmds:
+      - sudo rm -rf /usr/local/go
+      - rm -rf $(go env GOPATH)/bin/gopls $(go env GOPATH)/bin/dlv $(go env
+        GOPATH)/bin/golangci-lint $(go env GOPATH)/bin/yamllint  $(go env
+        GOPATH)/bin/editorconfig-checker
+
+  uninstall:helm:
+    internal: true
+    cmds:
+      - sudo rm -f /usr/local/bin/helm
+
+  uninstall:docker:
+    preconditions:
+      - sh: "command -v apt-get"
+        msg: "This cleanup task is only supported on Debian/Ubuntu (apt-get not found)."
+    cmds:
+      - echo " Removing Docker and associated data..."
+      - sudo apt-mark unhold docker-ce docker-ce-cli containerd.io
+        docker-buildx-plugin docker-compose-plugin || true
+      - sudo apt-get purge -y docker-ce docker-ce-cli containerd.io
+        docker-buildx-plugin docker-compose-plugin
+      - sudo apt-get autoremove -y --purge
+      - sudo rm -rf /var/lib/docker
+      - sudo rm -rf /var/lib/containerd
+      - hash -r
+      - echo "Docker removed."
+
+  uninstall:k3s:
+    desc: "Remove K3s binary and cleanup files"
+    preconditions:
+      - sh: "test -f /usr/local/bin/k3s-uninstall.sh"
+        msg: "K3s uninstaller not found. Is K3s installed?"
+    cmds:
+      - sudo /usr/local/bin/k3s-uninstall.sh
+      - rm -rf {{.KUBECONFIG}}
+    status:
+      - "! command -v k3s"
+
+  kubeconfig:
+    internal: true
+    desc: "Configure local kubeconfig with correct permissions"
+    label: "Syncing Kubeconfig for user: {{.USER}}"
+    preconditions:
+      - sh: "sudo test -f {{.K3S_DATA_DIR}}/k3s.yaml"
+        msg: "Source k3s.yaml not found. Did the k3s installation fail?"
+    cmds:
+      - mkdir -p {{dir .KUBECONFIG}}
+      - sudo cat {{.K3S_DATA_DIR}}/k3s.yaml | tee {{.KUBECONFIG}} > /dev/null
+      - chmod 600 {{.KUBECONFIG}}
+      - echo "✅ Kubeconfig synced to {{.KUBECONFIG}}"
+
+  patch:k3s-dns:
+    internal: true
+    desc: "Inject IPs and domains into K3s CoreDNS"
+    preconditions:
+      - sh: test -f {{.KUBECONFIG}}
+        msg: "Kubeconfig not found at {{.KUBECONFIG}}"
+    cmds:
+      - |
+        # 1. Export current config
+        sudo KUBECONFIG={{.KUBECONFIG}} kubectl -n kube-system get configmap coredns -o yaml > .local/dns-orig.yaml
+
+        # 2. Inject entries using awk after the NodeHosts reference
+        awk -v ip="{{.HARBOR_IP}}" '
+        /hosts \/etc\/coredns\/NodeHosts/ {
+          print $0
+          print "        " ip " registry.machine"
+          print "        " ip " symphony.machine"
+          next
+        }
+        { print }
+        ' .local/dns-orig.yaml > .local/dns-new.yaml
+
+        # 3. Apply and Restart
+        sudo KUBECONFIG={{.KUBECONFIG}} kubectl apply -f .local/dns-new.yaml
+        sudo KUBECONFIG={{.KUBECONFIG}} kubectl -n kube-system rollout restart deployment coredns
+        sudo KUBECONFIG={{.KUBECONFIG}} kubectl -n kube-system rollout status deployment/coredns --timeout=60s
+    status:
+      # This task will skip if registry.machine or symphony.machine already exists in the ConfigMap
+      - sudo KUBECONFIG={{.KUBECONFIG}} kubectl -n kube-system get configmap
+        coredns -o yaml | grep -q "registry.machine"
+      - sudo KUBECONFIG={{.KUBECONFIG}} kubectl -n kube-system get configmap
+        coredns -o yaml | grep -q "symphony.machine"
+
+  patch:host-dns:
+    desc: "Update local /etc/hosts with Registry and symphony mappings"
+    vars:
+      HARBOR_IP:
+        sh: echo ${HARBOR_IP:-"127.0.0.1"}
+      SYMPHONY_IP:
+        sh: echo ${SYMPHONY_IP:-"127.0.0.1"}
+    cmds:
+      - echo " Updating /etc/hosts"
+      - |
+        echo "{{.HARBOR_IP}} registry.machine" | sudo tee -a /etc/hosts
+        echo "{{.SYMPHONY_IP}} symphony.machine" | sudo tee -a /etc/hosts
+      - echo "✅ /etc/hosts updated"
+    status:
+      # Skips if registry.machine is already present in /etc/hosts
+      - grep -q "registry.machine" /etc/hosts

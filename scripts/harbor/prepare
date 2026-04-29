@@ -2,7 +2,7 @@
 set -e
 
 # If compiling source code this dir is harbor's make dir.
-# If installing harbor via package, this dir is harbor's root dir.
+# If installing Registry via package, this dir is harbor's root dir.
 if [[ -n "$HARBOR_BUNDLE_DIR" ]]; then
     harbor_prepare_path=$HARBOR_BUNDLE_DIR
 else
@@ -51,7 +51,7 @@ secret_dir=${data_path}/secret
 config_dir=$harbor_prepare_path/common/config
 
 # Set the prepare base dir, for mac, it should be $HOME, for linux, it should be /
-# The certificate and the data directory in harbor.yaml should be sub directories of $HOME when installing Harbor in MacOS
+# The certificate and the data directory in harbor.yaml should be sub directories of $HOME when installing Registry in MacOS
 prepare_base_dir=/
 if [ "$(uname)" == "Darwin" ]; then
     prepare_base_dir=$HOME

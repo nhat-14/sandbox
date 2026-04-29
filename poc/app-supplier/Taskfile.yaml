@@ -1,0 +1,102 @@
+version: "3"
+
+vars:
+  REGISTRY: "{{.REGISTRY_HOST | default \"127.0.0.1\"}}:{{.REGISTRY_PORT | default
+    \"5000\"}}"
+  OCI_ORG: "{{.OCI_ORGANIZATION | default \"margo\"}}"
+  # Paths
+  SAMPLES_SRC: "samples"
+  SAMPLES_COPY: ".samples-copy"
+
+tasks:
+  default:
+    silent: true
+    cmds: [ task --list ]
+
+  prereq:
+    internal: true
+    status: [ oras version ]
+    cmds:
+      - go install oras.land/oras/cmd/oras@v1.3.2
+
+  init:
+    internal: true
+    deps: [ prereq ]
+    cmds:
+      - cp -r {{.SAMPLES_SRC}} {{.SAMPLES_COPY}}
+
+  clean:
+    cmds:
+      - rm otel.tar
+      - rm -rf {{.SAMPLES_COPY}}
+
+  push:nextcloud:
+    desc: Push Nextcloud app package
+    deps: [ init ]
+    cmds:
+      - defer: { task: clean }
+      - task: oras:push
+        vars:
+          DIR: "{{.SAMPLES_COPY}}/nextcloud-compose/margo-package"
+          REPO: "nextcloud-compose-app-package"
+
+  push:otel:
+    desc: Build and push Custom OTEL app
+    deps: [ init ]
+    vars:
+      IMG: "{{.REGISTRY}}/library/custom-otel-app"
+      TAG: "latest"
+      TAR_NAME: "otel.tar"
+    cmds:
+      - defer: { task: clean }
+      # 1. Build and export to OCI layout tar
+      - >
+        docker buildx build {{.SAMPLES_COPY}}/custom-otel-helm-app/code/app
+        --network=host -t {{.IMG}}:{{.TAG}} --output
+        type=docker,dest={{.TAR_NAME}}
+
+      # 2. Authenticate
+      - |
+        if [ -n "{{.REGISTRY_PASS}}" ]; then
+          echo "{{.REGISTRY_PASS}}" | docker login {{.REGISTRY}} -u {{.REGISTRY_USER}} --password-stdin
+        else
+          echo "Skipping login: REGISTRY_PASS not set"
+        fi
+
+      # 3. Push the image to container registry
+      - oras cp --from-oci-layout ./{{.TAR_NAME}}:{{.TAG}} {{.IMG}}:{{.TAG}} \
+        --insecure --disable-path-validation
+      # OR: docker push {{.IMG}}:{{.TAG}}
+
+      # Package the sample Helm and update the registry links in margo.yaml
+      - |
+        cd {{.SAMPLES_COPY}}/custom-otel-helm-app/code/helm
+        VERSION=$(awk '/^version:/ {print $2}' Chart.yaml)
+        sed -i "s|{{ "{{" }}REPOSITORY{{ "}}" }}|{{.IMG}}|g" values.yaml
+        helm package . --destination /tmp
+        helm push "/tmp/custom-otel-helm-${VERSION}.tgz" "oci://{{.REGISTRY}}/library" --insecure-skip-tls-verify
+      - |
+        sed -i "s|{{ "{{" }}HELM_REPOSITORY{{ "}}" }}|oci://{{.REGISTRY}}/library/custom-otel-helm|g" ../../margo-package/margo.yaml
+        sed -i "s|{{ "{{" }}HELM_REVISION{{ "}}" }}|$VERSION|g" ../../margo-package/margo.yaml
+      - task: oras:push
+        vars:
+          DIR: "{{.SAMPLES_COPY}}/custom-otel-helm-app/margo-package"
+          REPO: "custom-otel-helm-app-package"
+
+  oras:push:
+    internal: true
+    preconditions:
+      - sh: "test -f {{.DIR}}/margo.yaml"
+        msg: "margo.yaml not found in {{.DIR}}"
+    cmds:
+      # - echo "{{.REGISTRY_PASS}}" | oras login "{{.REGISTRY}}" -u
+      #   {{.REGISTRY_USER}} --password-stdin --insecure
+      - |
+        FILES="{{.DIR}}/margo.yaml:application/vnd.margo.app.description.v1+yaml"
+        [ -d "resources" ] && FILES="$FILES $(find resources -type f -printf '%p:application/octet-stream ')"
+
+        oras push "{{.REGISTRY}}/{{.REPO}}:latest" \
+          --artifact-type "application/vnd.margo.app.v1+json" \
+          --insecure \
+          --disable-path-validation \
+          $FILES

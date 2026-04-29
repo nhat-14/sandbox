@@ -115,7 +115,7 @@ The typical workflow for preparing a release is as follows:
 
 ### Automation Implementation Details
 
-- Releases are automated using [GoReleaser](https://goreleaser.com/) triggered by tags matching `v*` in [.github/workflows/release.yml](.github/workflows/release.yml).
+- Releases are automated using [GoReleaser](https://goreleaser.com/) triggered by tags matching `v*` in [.github/workflows/release.yaml](.github/workflows/release.yaml).
 - GoReleaser handles building binaries, docker images, checksums, and changelogs as defined in [.goreleaser.yaml](.goreleaser.yaml).
 
 ## Immutable Releases

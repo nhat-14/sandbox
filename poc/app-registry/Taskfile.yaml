@@ -1,0 +1,59 @@
+version: "3"
+
+vars:
+  # Paths
+  LOCAL_DIR: ".local"
+  CERT_DIR: "{{.LOCAL_DIR}}/certificates"
+
+  # --- Runtime Configuration ---
+  REGISTRY_HOST: "{{.REGISTRY_HOST | default \"127.0.0.1\"}}"
+  REGISTRY_PORT: "{{.REGISTRY_PORT | default 5000}}"
+
+tasks:
+  default:
+    desc: "Show available tasks"
+    cmds:
+      - task --list
+
+  init:
+    internal: true
+    desc: "Prepare the local workspace sandbox"
+    cmds:
+      - mkdir -p {{.CERT_DIR}}
+    status:
+      - test -d {{.CERT_DIR}}
+
+  up:
+    desc: "Start OCI Registry via Compose"
+    cmds:
+      # Generate registry certificates, if missing
+      - CERT_DIR={{.CERT_DIR}} docker compose --profile init run --rm init-certs
+      # Start OCI Registry
+      - CERT_DIR={{.CERT_DIR}} docker compose up -d registry-https
+      - echo "✅ OCI Registry started"
+
+  down:
+    desc: "Stop OCI Registry via Compose"
+    cmds:
+      - CERT_DIR={{.CERT_DIR}} docker compose down --remove-orphans || true
+
+  # install:
+  #   desc: "Installs Zot helm chart"
+  #   cmds:
+  #     - helm repo add project-zot http://zotregistry.dev/helm-charts
+  #     - helm install zot project-zot/zot
+
+  # uninstall:
+  #   desc: "Uninstalls Zot helm chart"
+  #   cmds:
+  #     - helm uninstall zot
+
+  clean:
+    desc: "Remove Registry and all data"
+    prompt: "This will delete all certificates and data. Continue?"
+    deps: [ down ]
+    cmds:
+      - rm -rf ${CERT_DIR}
+      - docker volume rm margo-registry-data || true
+      - rm -rf {{.LOCAL_DIR}}
+      - echo "Workspace cleaned."

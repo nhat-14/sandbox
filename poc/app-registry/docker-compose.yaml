@@ -1,0 +1,131 @@
+# poc/wfm/server/docker-compose.yaml
+version: "3.8"
+
+volumes:
+  registry_data:
+    name: margo-registry-data
+
+secrets:
+  registry_ca:
+    file: ${CERT_DIR}/ca-crt.pem
+  registry_cert:
+    file: ${CERT_DIR}/server-cert.pem
+  registry_key:
+    file: ${CERT_DIR}/server-key.pem
+
+configs:
+  registry_config:
+    content: |
+      {
+        "distSpecVersion": "1.1.0",
+        "storage": { "rootDirectory": "/var/lib/registry", "dedupe": true },
+        "http": {
+          "address": "0.0.0.0",
+          "port": "5000",
+          "tls": {
+            "cert": "/etc/zot/certs/server-cert.pem",
+            "key": "/etc/zot/certs/server-key.pem"
+          }
+        },
+        "extensions": {
+          "search": { "enable": true },
+          "lint": { "enable": true }
+        }
+      }
+
+services:
+  init-certs:
+    # use this service to generate certs for the registry
+    profiles: ["init"]
+    image: alpine/openssl:latest
+    container_name: registry-certs
+    volumes:
+      - ${CERT_DIR}:/certs
+    environment:
+      - CERT_VALIDITY_DAYS=${CERT_VALIDITY_DAYS:-365}
+      - REGISTRY_HOST=${REGISTRY_HOST:-registry.internal.margo.org}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Exit if certificates already exist
+        if [ -f /certs/ca-key.pem ] && [ -f /certs/server-key.pem ]; then
+          echo "✅ WFM certificates already exist at ${CERT_DIR}"
+          exit 0
+        fi
+
+        echo "🔐 Generating WFM certificates..."
+
+        # Generate CA
+        openssl genrsa -out /certs/ca-key.pem 4096
+        openssl req -new -x509 -days $$CERT_VALIDITY_DAYS \
+          -key /certs/ca-key.pem -out /certs/ca-crt.pem \
+          -subj "/C=IN/ST=GGN/L=Sector 48/O=Margo/CN=Margo Root CA"
+
+        # Determine if REGISTRY_HOST is IP or DNS
+        IS_IP=$$(echo $$REGISTRY_HOST | grep -E '^[0-9.]+$$' && echo "true" || echo "false")
+
+        # Generate Server Certificate with SAN
+        cat > /tmp/server.conf <<EOF
+        [req]
+        default_bits = 2048
+        prompt = no
+        distinguished_name = dn
+        req_extensions = v3_req
+
+        [dn]
+        C=IN
+        ST=GGN
+        L=Sector 48
+        O=Margo
+        CN=$$REGISTRY_HOST
+
+        [v3_req]
+        basicConstraints = CA:FALSE
+        keyUsage = keyEncipherment, digitalSignature
+        extendedKeyUsage = serverAuth
+        subjectAltName = @alt_names
+
+        [alt_names]
+        $$(if [ "$$IS_IP" = "true" ]; then echo "IP.1 = $$REGISTRY_HOST"; else echo "DNS.1 = $$REGISTRY_HOST"; fi)
+        EOF
+
+        openssl genrsa -out /certs/server-key.pem 2048
+        openssl req -new -key /certs/server-key.pem \
+          -out /tmp/server.csr -config /tmp/server.conf
+        openssl x509 -req -in /tmp/server.csr \
+          -CA /certs/ca-crt.pem -CAkey /certs/ca-key.pem \
+          -CAcreateserial -out /certs/server-cert.pem \
+          -days $$CERT_VALIDITY_DAYS \
+          -extensions v3_req -extfile /tmp/server.conf
+
+        # Set restrictive permissions
+        chmod 600 /certs/ca-key.pem /certs/server-key.pem
+        chmod 644 /certs/ca-crt.pem /certs/server-cert.pem
+
+        echo "✅ WFM certificates generated"
+
+  registry-https:
+    image: ghcr.io/project-zot/zot-linux-amd64:latest
+    container_name: registry-https
+    ports:
+      - "${REGISTRY_PORT:-5000}:5000"
+    configs:
+      - source: registry_config
+        target: /etc/zot/config.json
+    secrets:
+      - source: registry_cert
+        target: /etc/zot/certs/server-cert.pem
+      - source: registry_key
+        target: /etc/zot/certs/server-key.pem
+    volumes:
+      - registry_data:/var/lib/registry
+    restart: always
+    healthcheck:
+      # Tests the base OCI v2 endpoint. Since you we are using HTTPS,
+      # use -k (insecure) when using the self-signed certs inside the container network.
+      test: ["CMD", "curl", "-f", "-k", "https://localhost:5000/v2/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+

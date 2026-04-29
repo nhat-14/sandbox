@@ -1,0 +1,140 @@
+version: "3"
+
+vars:
+  REGISTRY: "{{.REGISTRY_HOST | default \"localhost\"}}:{{.REGISTRY_PORT | default
+    \"5000\"}}"
+  OCI_ORG: "{{.OCI_ORGANIZATION | default \"margo\"}}"
+  # Paths
+  LOCAL_DIR: ".local"
+  SRC_DIR: "{{.LOCAL_DIR}}/symphony"
+  BIN_DIR: "{{.LOCAL_DIR}}/bin"
+  CERT_DIR: "{{.LOCAL_DIR}}/certificates"
+  VERSION: "{{.VERSION | default \"latest\"}}"
+  IMAGE_NAME: "{{.IMAGE_NAME | default \"ghcr.io/margo/symphony-api\"}}"
+  TAG: "{{.TAG | default \"latest\"}}"
+
+  # Version and branch (env variables take priority)
+  BRANCH: "{{.WFM_SYMPHONY_BRANCH | default \"main\"}}"
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list
+
+  install_rust:
+    internal: true
+    status:
+      - command -v rust
+    cmds:
+      - |
+        curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path \
+        && . "$HOME/.cargo/env"
+
+  setup:
+    desc: "Initialize sandbox and sync Symphony source"
+    internal: true
+    status:
+      - test -d {{.SRC_DIR}}/.git
+    cmds:
+      - |
+        if [ ! -d "{{.SRC_DIR}}/.git" ]; then
+          git clone --branch {{.BRANCH | default "main"}} --single-branch --depth 1 \
+            https://github.com/margo/symphony.git {{.SRC_DIR}}
+        fi
+
+  build:
+    desc: "Build Symphony API and CLI binaries"
+    dir: "{{.SRC_DIR}}"
+    cmds:
+      - task: setup
+      - task: install_rust
+      - cd api/pkg/apis/v1alpha1/providers/target/rust && cargo build --release
+      - cd api && go build -trimpath -o {{.BIN_DIR}}/symphony-api .
+      - |
+        cd cli && go build -ldflags="-X 'main.version={{.VERSION}}'" \
+          -o {{.BIN_DIR}}/maestro .
+    sources:
+      - "{{.SRC_DIR}}/api"
+
+  image:
+    desc: "Build and push Symphony container"
+    deps: [ setup ]
+    dir: "{{.SRC_DIR}}"
+    cmds:
+      - |
+        docker buildx build --network=host \
+          -t {{.IMAGE_NAME}}:{{.TAG}} -f api/Dockerfile .
+      - |
+        echo "importing this image into k3s, ignore if k3s doesn't exist"
+        docker save -o symphony-api.tar {{.IMAGE_NAME}}:{{.TAG}}
+        k3s ctr -n k8s.io images import symphony-api.tar
+
+  up:
+    desc: "Deploy Docker Compose based stack"
+    deps: [ image ]
+    # failfast: true
+    dir: "{{.SRC_DIR}}" # Explicit directory
+    env:
+      REGISTRY_CA_PATH: "{{.CERT_DIR}}/ca-crt.pem"
+      REGISTRY_CERT_PATH: "{{.CERT_DIR}}/server-cert.pem"
+      REGISTRY_KEY_PATH: "{{.CERT_DIR}}/server-key.pem"
+      SYMPHONY_CA_PATH: "{{.CERT_DIR}}/ca-crt.pem"
+      SYMPHONY_CERT_PATH: "{{.CERT_DIR}}/server-cert.pem"
+      SYMPHONY_KEY_PATH: "{{.CERT_DIR}}/server-key.pem"
+      SYMPHONY_IMAGE_REF: "{{.IMAGE_NAME}}:{{.TAG}}"
+      REDIS_VERSION: "{{.REDIS_VERSION | default \"7.0.15-alpine\"}}"
+      REGISTRY_VERSION: "{{.REGISTRY_VERSION | default \"2\"}}"
+    cmds:
+      # Generate certificates if missing
+      - docker compose --profile init run --rm cert-init
+      # Start services
+      - docker compose --profile secure up -d
+      - |
+        sleep 2
+        echo -e "\nStack is up! Endpoints:"
+        echo "Registry: https://localhost:5443"
+        echo "Redis: https://localhost:6379"
+        echo "Symphony: https://localhost:8082"
+        echo "Certificates can be located here: {{.CERT_DIR}}"
+        echo "Same certificates have been used for registry and symphony"
+
+  down:
+    desc: "Purge docker compose environment"
+    dir: "{{.WFM_DIR}}"
+    cmds:
+      - docker compose --profile secure down --remove-orphans || true
+
+  helm-install:
+    desc: "Install Symphony via Helm"
+    deps: [ certs, image ]
+    cmds:
+      - docker compose --profile init run --rm cert-init
+      - kubectl create namespace {{.HELM_NAMESPACE}} --dry-run=client -o yaml |
+        kubectl apply -f -
+      - |
+        # using the same certificates for the registry and symphony
+        # for ease of testing
+        helm upgrade --install {{.HELM_RELEASE_NAME}}  ./helmchart \
+        --set symphonyApi.image="{{.IMAGE_NAME}}:{{.TAG}}" \
+        --set-file secrets.registryCA="{{.CERT_DIR}}/ca-crt.pem" \
+        --set-file secrets.registryCert="{{.CERT_DIR}}/server-cert.pem" \
+        --set-file secrets.registryKey="{{.CERT_DIR}}/server-key.pem" \
+        --set-file secrets.symphonyCA="{{.CERT_DIR}}/ca-crt.pem" \
+        --set-file secrets.symphonyCert="{{.CERT_DIR}}/server-cert.pem" \
+        --set-file secrets.symphonyKey="{{.CERT_DIR}}/server-key.pem" \
+        --namespace {{.HELM_NAMESPACE}}
+
+  helm-uninstall:
+    desc: "Uninstall Symphony Helm release"
+    cmds:
+      - helm uninstall {{.HELM_RELEASE_NAME}} --namespace {{.HELM_NAMESPACE}}
+      - kubectl delete namespace {{.HELM_NAMESPACE}}
+
+  clean:
+    desc: "Purge local environment"
+    cmds:
+      - docker compose down --remove-orphans || true
+      - rm -rf {{.LOCAL_DIR}}
+      - rm -rf ${CERT_DIR}/*.{key,crt,pem,srl}
+      - docker volume rm margo-redis-data || true

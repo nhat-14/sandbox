@@ -1,0 +1,64 @@
+# --- Prometheus Configuration ---
+prometheus:
+  server:
+    serverFiles:
+      prometheus.yaml:
+        global:
+          scrape_interval: 15s
+        scrape_configs:
+          - job_name: "prometheus"
+            static_configs:
+              - targets: [ "localhost:9090" ]
+    service:
+      type: NodePort
+      nodePort: 30900
+    # Replaces the patch command: defines the second port (9090) for Remote Write
+    extraServiceConfigs:
+      remote-write:
+        port: 9090
+        targetPort: 9090
+        nodePort: 30909
+    extraArgs:
+      web.enable-remote-write-receiver: ""
+      enable-feature: "remote-write-receiver"
+    persistentVolume:
+      enabled: false
+
+# --- Jaeger Configuration ---
+jaeger:
+  collector:
+    service:
+      type: NodePort
+      otlp:
+        grpc:
+          nodePort: 30417
+        http:
+          nodePort: 30418
+  query:
+    service:
+      type: NodePort
+      nodePort: 32500
+
+# --- Loki Configuration ---
+loki:
+  deploymentMode: SingleBinary
+  loki:
+    auth_enabled: false
+    commonConfig:
+      replication_factor: 1
+    storage:
+      type: filesystem
+  gateway:
+    enabled: true
+    service:
+      type: NodePort
+      nodePort: 32100
+
+# --- Grafana Configuration ---
+grafana:
+  service:
+    type: NodePort
+    nodePort: 32000
+  adminPassword: "admin"
+  persistence:
+    enabled: false

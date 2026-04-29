@@ -1,4 +1,6 @@
 **/.git
+**/.github
+**/.local
 **/tests
 **/README.md
 **/*.sh
@@ -8,3 +10,5 @@
 **/.devcontainer
 **/helmchart
 **/docker-compose
+**/docs
+**/tools

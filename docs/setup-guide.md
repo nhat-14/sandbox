@@ -45,7 +45,7 @@ You need to download the setup files to all three VMs. Follow these steps on **e
    cd sandbox
    git sparse-checkout init --no-cone
    git sparse-checkout set \
-      scripts/*
+      scripts/* poc/
    git checkout main
    ```
 ---
@@ -74,7 +74,7 @@ On each VM, you need to configure environment variables (settings that tell the 
    2. Then append the following entries to the file:
       ```bash
       <ip-address-of-the-wfm-machine> symphony.machine
-      <ip-address-of-the-harbor-machine> harbor.machine
+      <ip-address-of-the-harbor-machine> registry.machine
       ```
       your file would look something like this:
       ```bash
@@ -86,7 +86,7 @@ On each VM, you need to configure environment variables (settings that tell the 
       ff02::1 ip6-allnodes
 
       192.11.11.11 symphony.machine # <---- newly appended line here with ip
-      192.11.11.11 harbor.machine # <--- newly appended line with ip
+      192.11.11.11 registry.machine # <--- newly appended line with ip
       ```
 
 🔴 **Important:** Complete this step on all three VMs before proceeding.
@@ -113,7 +113,7 @@ On each VM, you need to configure environment variables (settings that tell the 
    - Type `1` and press Enter
    - Choose: `Option 1: PreRequisites Setup`
 
-   This installs everything needed like Redis, Docker, Helm, and other tools. This may take 10-15 minutes.
+   This installs everything basic prerequisites like Docker, K3s, Helm, and other tools. This may take 10-15 minutes.
 
 
 3. **Start the Workload Fleet Manager**
@@ -123,7 +123,7 @@ On each VM, you need to configure environment variables (settings that tell the 
    - Type `3` and press Enter
    - Choose: `Option 3: Symphony Start`
 
-   This starts the Workload Fleet Manager service.
+   This starts the Workload Fleet Manager service stack(symphony and redis).
 > Note: Docker image for Workload Fleet Manager has been already built and pushed using CI pipeline to Margo GHCR registry from where the below script pull the image and starts WFM.
 
 4. **Add Monitoring Tools**
@@ -137,7 +137,7 @@ On each VM, you need to configure environment variables (settings that tell the 
 
 5. **Verify the Workload Fleet Manager Is Running Correctly**
    ```bash
-   sudo docker logs -f symphony-api-container
+   sudo docker logs -f symphony-api
    ```
    You should see log messages indicating the service is running. Press `Ctrl+C` to exit.
 
@@ -168,8 +168,7 @@ On each VM, you need to configure environment variables (settings that tell the 
     sudo -E bash device-agent.sh docker # for docker-compose device
     sudo -E bash device-agent.sh k3s    # for k3s device
    ```
-   - First, type `11` and press Enter to choose: `Option 11: create_device_rsa_certs`
-   - Then run the command again and type `12` and press Enter to choose: `Option 12: create_device_ecdsa_certs`
+   - The certs will be automatically generated.
 
    These certificates allow secure communication between VMs and are automatically saved in `$HOME/certs` directory.
 
@@ -177,7 +176,7 @@ On each VM, you need to configure environment variables (settings that tell the 
 
 ## Step 4: Deploy (Connect Everything)
 
-### Copy Security Files Between VMs ( Both WFM's and Harbor's to Device VM)
+### Copy Security File Between VMs
 
 You need to copy a security file from the WFM VM to each Device VM.
 
@@ -186,9 +185,7 @@ You need to copy a security file from the WFM VM to each Device VM.
 | Step | Action | Command | Expected Result |
 |------|--------|---------|-----------------|
 | 1 | Find WFM IP address | `hostname -I` | First IP address (e.g., 192.168.1.100) |
-| 2 | Locate WFM certificate | `cd $HOME/symphony/api/certificates`<br>`ls -la ca-cert.pem` | File: `ca-cert.pem` |
-| 3 | Locate Harbor certificate | `cd $HOME/sandbox/scripts/harbor/certs`<br>`ls -la harbor.crt` | File: `harbor.crt` |
-
+| 2 | Locate certificate | `cd $HOME/symphony/api/certificates`<br>`ls -la wfm-ca.crt` | File: `wfm-ca.crt` |
 
 **Note:** Write down the IP address from Step 1 for use in the copy commands below.
 
@@ -202,8 +199,8 @@ You need to copy a security file from the WFM VM to each Device VM.
 
 | Target VM | Run From | SCP Command | Example |
 |-----------|----------|-------------|---------|
-| **Docker Device** | Docker Device VM | `scp username@WFM-VM-IP:~/symphony/api/certificates/ca-cert.pem $HOME/certs/` <br><br> `scp username@WFM-VM-IP:~/sandbox/scripts/harbor/certs/harbor.crt $HOME/certs/` | `scp azureuser@10.10.10.4:~/symphony/api/certificates/ca-cert.pem $HOME/certs/` <br><br> `scp azureuser@10.10.10.4:~/sandbox/scripts/harbor/certs/harbor.crt $HOME/certs/` | `scp azureuser@10.10.10.4:~/symphony/api/certificates/ca-cert.pem $HOME/certs/` |
-| **K3s Device** | K3s Device VM | `scp username@WFM-VM-IP:~/symphony/api/certificates/ca-cert.pem $HOME/certs/` <br><br> `scp username@WFM-VM-IP:~/sandbox/scripts/harbor/certs/harbor.crt $HOME/certs/` | `scp azureuser@10.10.10.4:~/symphony/api/certificates/ca-cert.pem $HOME/certs/` <br><br> `scp azureuser@10.10.10.4:~/sandbox/scripts/harbor/certs/harbor.crt $HOME/certs/` | `scp azureuser@10.10.10.4:~/symphony/api/certificates/ca-cert.pem $HOME/certs/` |
+| **Docker Device** | Docker Device VM | `scp username@WFM-VM-IP:~/symphony/api/certificates/wfm-ca.crt $HOME/certs/` | `scp azureuser@10.10.10.4:~/symphony/api/certificates/wfm-ca.crt $HOME/certs/` |
+| **K3s Device** | K3s Device VM | `scp username@WFM-VM-IP:~/symphony/api/certificates/wfm-ca.crt $HOME/certs/` | `scp azureuser@10.10.10.4:~/symphony/api/certificates/wfm-ca.crt $HOME/certs/` |
 
 **Note:** Run with **sudo** if fails.
 
@@ -215,8 +212,8 @@ You need to copy a security file from the WFM VM to each Device VM.
 
 | Step | Docker Device VM | K3s Device VM |
 |------|------------------|---------------|
-| 1 | Open `ca-cert.pem` on WFM VM and copy contents | Open `ca-cert.pem` on WFM VM and copy contents |
-| 2 | Create file `ca-cert.pem` in `$HOME/certs/` | Create file `ca-cert.pem` in `$HOME/certs/` |
+| 1 | Open `wfm-ca.crt` on WFM VM and copy contents | Open `wfm-ca.crt` on WFM VM and copy contents |
+| 2 | Create file `wfm-ca.crt` in `$HOME/certs/` | Create file `wfm-ca.crt` in `$HOME/certs/` |
 | 3 | Paste contents and save | Paste contents and save |
 
 
@@ -283,7 +280,7 @@ You need to copy a security file from the WFM VM to each Device VM.
             fallthrough in-addr.arpa ip6.arpa
          }
          hosts /etc/coredns/NodeHosts {
-            52.224.241.180 harbor.machine # <----- Newly added line. This tells kubernetes env on how to resolve harbor.machine
+            52.224.241.180 registry.machine # <----- Newly added line. This tells kubernetes env on how to resolve registry.machine
             52.224.241.180 symphony.machine # <----- Newly added line. This tells kubernetes env on how to resolve symphony.machine
             ttl 60
             reload 15s
@@ -429,7 +426,7 @@ Enter choice [1-9]: 1
 | af3af6b3-01c1-42bb-9168-347e99a174b8 | custom-otel-helm-app |         | ONBOARD   | ONBOARDED | OCI_REPO    | {"authentication":{"password":"Harb | 2025-12-02 10:00 | 2025-12-02 10:00 |
 |                                      |                      |         |           |           |             | or12345","type":"basic","username": |                  |                  |
 |                                      |                      |         |           |           |             | "admin"},"registryUrl":"172.19.59.1 |                  |                  |
-|                                      |                      |         |           |           |             | 48:8443","repository":"library/cust |                  |                  |
+|                                      |                      |         |           |           |             | 48:8081","repository":"library/cust |                  |                  |
 |                                      |                      |         |           |           |             | om-otel-helm-app-package","tag":"la |                  |                  |
 |                                      |                      |         |           |           |             | test","url":""}                     |                  |                  |
 +--------------------------------------+----------------------+---------+-----------+-----------+-------------+-------------------------------------+------------------+------------------+
@@ -500,7 +497,7 @@ Select this option to display the combined view of packages, devices, and deploy
 
 **Option 5: Upload App-Package**
 
-Select this option to upload an application package from the pre-configured harbor OCI registry to WFM for deployment. Also user can upload new application packges to local harbor OCI registry which can be discovered here and listed as an option to upload to WFM. Refer [upload instructions.](./upload-package.md)
+Select this option to upload an application package from the pre-configured Registry OCI registry to WFM for deployment. Also user can upload new application packges to local Registry OCI registry which can be discovered here and listed as an option to upload to WFM. Refer [upload instructions.](./upload-package.md)
 
 > Note: Below is a example snippet showing the expected output of the selection.
 
@@ -508,7 +505,7 @@ Select this option to upload an application package from the pre-configured harb
 Enter choice [1-9]: 5
 📦 Upload App Package
 ====================
-🔍 Discovering app packages from Harbor OCI Registry...
+🔍 Discovering app packages from Registry OCI Registry...
 Select one of the packages:
 1) nginx-helm-app-package
 2) wordpress-compose-app-package
@@ -549,7 +546,7 @@ Enter choice [1-9]: 6
 | ae011433-28ed-4f4e-a8af-474810810746 | custom-otel-helm-app |         | ONBOARD   | ONBOARDED | OCI_REPO    | {"authentication":{"password":"Harb | 2025-12-02 09:52 | 2025-12-02 09:52 |
 |                                      |                      |         |           |           |             | or12345","type":"basic","username": |                  |                  |
 |                                      |                      |         |           |           |             | "admin"},"registryUrl":"172.19.59.1 |                  |                  |
-|                                      |                      |         |           |           |             | 48:8443","repository":"library/cust |                  |                  |
+|                                      |                      |         |           |           |             | 48:8081","repository":"library/cust |                  |                  |
 |                                      |                      |         |           |           |             | om-otel-helm-app-package","tag":"la |                  |                  |
 |                                      |                      |         |           |           |             | test","url":""}                     |                  |                  |
 +--------------------------------------+----------------------+---------+-----------+-----------+-------------+-------------------------------------+------------------+------------------+
@@ -601,7 +598,7 @@ Enter choice [1-9]: 7
 | ae011433-28ed-4f4e-a8af-474810810746 | custom-otel-helm-app |         | ONBOARD   | ONBOARDED | OCI_REPO    | {"authentication":{"password":"Harb | 2025-12-02 09:52 | 2025-12-02 09:52 |
 |                                      |                      |         |           |           |             | or12345","type":"basic","username": |                  |                  |
 |                                      |                      |         |           |           |             | "admin"},"registryUrl":"172.19.59.1 |                  |                  |
-|                                      |                      |         |           |           |             | 48:8443","repository":"library/cust |                  |                  |
+|                                      |                      |         |           |           |             | 48:8081","repository":"library/cust |                  |                  |
 |                                      |                      |         |           |           |             | om-otel-helm-app-package","tag":"la |                  |                  |
 |                                      |                      |         |           |           |             | test","url":""}                     |                  |                  |
 +--------------------------------------+----------------------+---------+-----------+-----------+-------------+-------------------------------------+------------------+------------------+
@@ -846,5 +843,5 @@ These applications are pre-loaded and ready to deploy to your device VMs for tes
 If something doesn't work:
 1. Check that all VMs can communicate with each other (ping test)
 2. Verify environment variables are set correctly
-3. Make sure the ca-cert.pem file was copied correctly
+3. Make sure the wfm-ca.crt file was copied correctly
 4. Check the logs using the commands in "Check Everything is Working" section

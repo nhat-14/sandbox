@@ -1,0 +1,119 @@
+# poc/device/agent/docker-compose.yaml
+version: '3.8'
+
+volumes:
+  agent-data:
+    name: device-agent-data
+
+services:
+  init-certs:
+    # use this service to generate certificates for the device agent
+    profiles: ["init"]
+    image: alpine/openssl:latest
+    container_name: init-certs
+    restart: never
+    volumes:
+      - ${CERT_DIR}:/certs
+    environment:
+      - CERT_VALIDITY_DAYS=${CERT_VALIDITY_DAYS:-365}
+      - CLIENT_NAME=${CLIENT_NAME:-margo-wfm-client}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Exit if certificates already exist
+        if [ -f /certs/device-private.key ] && [ -f /certs/ca.key ]; then
+          echo "✅ Certificates already exist at ${CERT_DIR}"
+          exit 0
+        fi
+
+        echo "🔐 Generating device certificates..."
+
+        # Generate CA
+        openssl genrsa -out /certs/ca.key 4096
+        openssl req -new -x509 -days $$CERT_VALIDITY_DAYS \
+          -key /certs/ca.key -out /certs/ca.crt \
+          -subj "/C=IN/ST=GGN/L=Sector 48/O=Margo/CN=Margo Root CA"
+
+        # Generate Device Certificate
+        cat > /tmp/client-cert.conf <<EOF
+        [req]
+        default_bits = 4096
+        prompt = no
+        default_md = sha256
+        distinguished_name = dn
+        req_extensions = v3_req
+
+        [dn]
+        C=IN
+        ST=GGN
+        L=Sector 48
+        O=Margo
+        CN=$$CLIENT_NAME
+
+        [v3_req]
+        basicConstraints = CA:FALSE
+        keyUsage = keyEncipherment, digitalSignature
+        extendedKeyUsage = clientAuth
+        EOF
+
+        openssl genrsa -out /certs/device-private.key 4096
+        openssl req -new -key /certs/device-private.key \
+          -out /tmp/client.csr -config /tmp/client-cert.conf
+        openssl x509 -req -in /tmp/client.csr \
+          -CA /certs/ca.crt -CAkey /certs/ca.key \
+          -CAcreateserial -out /certs/device-public.crt \
+          -days $$CERT_VALIDITY_DAYS \
+          -extensions v3_req -extfile /tmp/client-cert.conf
+
+        # Set restrictive permissions
+        chmod 600 /certs/ca.key /certs/device-private.key
+        chmod 644 /certs/ca.crt /certs/device-public.crt
+
+        echo "✅ Device certificates generated, and put in /certs"
+
+  device-agent:
+    image: ${AGENT_IMAGE_REF:-ghcr.io/margo/workload-fleet-management-client:latest}
+    container_name: workload-fleet-management-client
+    volumes:
+      - agent-data:/app/data
+      - type: bind
+        source: ${DOCKER_SOCK_PATH:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        read_only: false
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CONFIG_DIR}
+        target: /app/config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CERT_DIR}/device-private.key
+        target: /app/certs/device-private.key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CERT_DIR}/device-public.crt
+        target: /app/certs/device-public.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CERT_DIR}/ca.crt
+        target: /app/certs/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CERT_DIR}/wfm-ca.crt
+        target: /usr/local/share/ca-certificates/wfm-ca.crt
+        read_only: true
+      - type: bind
+        source: ${CERT_DIR}/registry-ca.crt
+        target: /usr/local/share/ca-certificates/registry-ca.crt
+        read_only: true
+    restart: unless-stopped
+    entrypoint: ["/app/device-agent"]
+    command: ["-config", "/app/config/config.yaml"]

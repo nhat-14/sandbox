@@ -1,16 +1,15 @@
 # Configuration file of Harbor
 
 # The IP address or hostname to access admin UI and registry service.
-# DO NOT use localhost or 127.0.0.1, because Harbor needs to be accessed by external clients.
+# DO NOT use localhost or 127.0.0.1, because Registry needs to be accessed by external clients.
 hostname: 0.0.0.0
 
 # http related config
 http:
   # port for http, default is 80. If https enabled, this port will redirect to https port
   port: 8081
-
-# https related config
-#https:
+  # https related config
+  #https:
   # https port for harbor, default is 443
   #port: 443
   # The path of cert and key files for nginx
@@ -19,36 +18,36 @@ http:
   # enable strong ssl ciphers (default: false)
   # strong_ssl_ciphers: false
 
-# # Harbor will set ipv4 enabled only by default if this block is not configured
-# # Otherwise, please uncomment this block to configure your own ip_family stacks
-# ip_family:
-#   # ipv6Enabled set to true if ipv6 is enabled in docker network, currently it affected the nginx related component
-#   ipv6:
-#     enabled: false
-#   # ipv4Enabled set to true by default, currently it affected the nginx related component
-#   ipv4:
-#     enabled: true
+  # # Registry will set ipv4 enabled only by default if this block is not configured
+  # # Otherwise, please uncomment this block to configure your own ip_family stacks
+  # ip_family:
+  #   # ipv6Enabled set to true if ipv6 is enabled in docker network, currently it affected the nginx related component
+  #   ipv6:
+  #     enabled: false
+  #   # ipv4Enabled set to true by default, currently it affected the nginx related component
+  #   ipv4:
+  #     enabled: true
 
-# # Uncomment following will enable tls communication between all harbor components
-# internal_tls:
-#   # set enabled to true means internal tls is enabled
-#   enabled: true
-#   # put your cert and key files on dir
-#   dir: /etc/harbor/tls/internal
+  # # Uncomment following will enable tls communication between all Registry components
+  # internal_tls:
+  #   # set enabled to true means internal tls is enabled
+  #   enabled: true
+  #   # put your cert and key files on dir
+  #   dir: /etc/harbor/tls/internal
 
 
-# Uncomment external_url if you want to enable external proxy
-# And when it enabled the hostname will no longer used
-# external_url: https://reg.mydomain.com:8433
+  # Uncomment external_url if you want to enable external proxy
+  # And when it enabled the hostname will no longer used
+  # external_url: https://reg.mydomain.com:8433
 
-# The initial password of Harbor admin
-# It only works in first time to install harbor
-# Remember Change the admin password from UI after launching Harbor.
+  # The initial password of Registry admin
+  # It only works in first time to install harbor
+  # Remember Change the admin password from UI after launching Harbor.
 harbor_admin_password: Harbor12345
 
-# Harbor DB configuration
+# Registry DB configuration
 database:
-  # The password for the user('postgres' by default) of Harbor DB. Change this before any production use.
+  # The password for the user('postgres' by default) of Registry DB. Change this before any production use.
   password: root123
   # The maximum number of connections in the idle connection pool. If it <=0, no idle connections are retained.
   max_idle_conns: 100
@@ -65,7 +64,7 @@ database:
 # The default data volume
 data_volume: /data
 
-# Harbor Storage settings by default is using /data dir on local filesystem
+# Registry Storage settings by default is using /data dir on local filesystem
 # Uncomment storage_service setting If you want to using external storage
 # storage_service:
 #   # ca_bundle is the path to the custom root ca certificate, which will be injected into the truststore
@@ -142,7 +141,7 @@ jobservice:
     - STD_OUTPUT
     - FILE
     # - DB
-  # The jobLogger sweeper duration (ignored if `jobLogger` is `stdout`)
+    # The jobLogger sweeper duration (ignored if `jobLogger` is `stdout`)
   logger_sweeper_duration: 1 #days
 
 notification:
@@ -165,7 +164,6 @@ log:
     rotate_size: 200M
     # The directory on your host that store log
     location: /var/log/harbor
-
   # Uncomment following lines to enable external syslog endpoint.
   # external_endpoint:
   #   # protocol used to transmit log to external endpoint, options is tcp or udp
@@ -175,7 +173,7 @@ log:
   #   # Port of external endpoint
   #   port: 5140
 
-#This attribute is for migrator to detect the version of the .cfg file, DO NOT MODIFY!
+  #This attribute is for migrator to detect the version of the .cfg file, DO NOT MODIFY!
 _version: 2.13.0
 
 # Uncomment external_database if using external database.
@@ -196,9 +194,9 @@ _version: 2.13.0
 #   # registry_db_index: 1
 #   # jobservice_db_index: 2
 #   # trivy_db_index: 5
-#   # it's optional, the db for harbor business misc, by default is 0, uncomment it if you want to change it.
+#   # it's optional, the db for Registry business misc, by default is 0, uncomment it if you want to change it.
 #   # harbor_db_index: 6
-#   # it's optional, the db for harbor cache layer, by default is 0, uncomment it if you want to change it.
+#   # it's optional, the db for Registry cache layer, by default is 0, uncomment it if you want to change it.
 #   # cache_layer_db_index: 7
 
 # Uncomment external_redis if using external Redis server
@@ -208,7 +206,7 @@ _version: 2.13.0
 #   # host for redis+sentinel:
 #   #  <host_sentinel1>:<port_sentinel1>,<host_sentinel2>:<port_sentinel2>,<host_sentinel3>:<port_sentinel3>
 #   host: redis:6379
-#   password: 
+#   password:
 #   # Redis AUTH command was extended in Redis 6, it is possible to use it in the two-arguments AUTH <username> <password> form.
 #   # there's a known issue when using external redis username ref:https://github.com/goharbor/harbor/issues/18892
 #   # if you care about the image pull/push performance, please refer to this https://github.com/goharbor/harbor/wiki/Harbor-FAQs#external-redis-username-password-usage
@@ -218,7 +216,7 @@ _version: 2.13.0
 #   # tls configuration for redis connection
 #   # only server-authentication is supported
 #   # mtls for redis connection is not supported
-#   # tls connection will be disable by default 
+#   # tls connection will be disable by default
 #   tlsOptions:
 #     enable: false
 #   # if it is a self-signed ca, please set the ca path specifically.
@@ -228,9 +226,9 @@ _version: 2.13.0
 #   jobservice_db_index: 2
 #   trivy_db_index: 5
 #   idle_timeout_seconds: 30
-#   # it's optional, the db for harbor business misc, by default is 0, uncomment it if you want to change it.
+#   # it's optional, the db for Registry business misc, by default is 0, uncomment it if you want to change it.
 #   # harbor_db_index: 6
-#   # it's optional, the db for harbor cache layer, by default is 0, uncomment it if you want to change it.
+#   # it's optional, the db for Registry cache layer, by default is 0, uncomment it if you want to change it.
 #   # cache_layer_db_index: 7
 
 # Uncomment uaa for trusting the certificate of uaa instance that is hosted via self-signed cert.
@@ -268,7 +266,7 @@ proxy:
 #   enabled: true
 #   # set sample_rate to 1 if you wanna sampling 100% of trace data; set 0.5 if you wanna sampling 50% of trace data, and so forth
 #   sample_rate: 1
-#   # # namespace used to differentiate different harbor services
+#   # # namespace used to differentiate different Registry services
 #   # namespace:
 #   # # attributes is a key value dict contains user defined attributes used to initialize trace provider
 #   # attributes:
@@ -299,12 +297,12 @@ upload_purging:
   dryrun: false
 
 # Cache layer configurations
-# If this feature enabled, harbor will cache the resource
+# If this feature enabled, Registry will cache the resource
 # `project/project_metadata/repository/artifact/manifest` in the redis
 # which can especially help to improve the performance of high concurrent
 # manifest pulling.
 # NOTICE
-# If you are deploying Harbor in HA mode, make sure that all the harbor
+# If you are deploying Registry in HA mode, make sure that all the harbor
 # instances have the same behaviour, all with caching enabled or disabled,
 # otherwise it can lead to potential data inconsistency.
 cache:
@@ -313,8 +311,8 @@ cache:
   # keep cache for one day by default
   expire_hours: 24
 
-# Harbor core configurations
-# Uncomment to enable the following harbor core related configuration items.
+# Registry core configurations
+# Uncomment to enable the following Registry core related configuration items.
 # core:
 #   # The provider for updating project quota(usage), there are 2 options, redis or db,
 #   # by default is implemented by db but you can switch the updation via redis which

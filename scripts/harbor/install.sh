@@ -7,7 +7,7 @@ source $DIR/common.sh
 
 set +o noglob
 
-usage=$'Please set hostname and other necessary attributes in harbor.yml first. DO NOT use localhost or 127.0.0.1 for hostname, because Harbor needs to be accessed by external clients.
+usage=$'Please set hostname and other necessary attributes in harbor.yml first. DO NOT use localhost or 127.0.0.1 for hostname, because Registry needs to be accessed by external clients.
 Please set --with-trivy if needs enable Trivy in Harbor.
 Please do NOT set --with-chartmuseum, as chartmusuem has been deprecated and removed.
 Please do NOT set --with-notary, as notary has been deprecated and removed.'
@@ -46,7 +46,7 @@ check_dockercompose
 
 if [ -f harbor*.tar.gz ]
 then
-    h2 "[Step $item]: loading Harbor images ..."; let item+=1
+    h2 "[Step $item]: loading Registry images ..."; let item+=1
     docker load -i ./harbor*.tar.gz
 fi
 echo ""
@@ -57,7 +57,7 @@ then
     sed "s/^hostname: .*/hostname: $host/g" -i ./harbor.yml
 fi
 
-h2 "[Step $item]: preparing harbor configs ...";  let item+=1
+h2 "[Step $item]: preparing Registry configs ...";  let item+=1
 prepare_para=
 if [ $with_trivy ]
 then
@@ -69,12 +69,12 @@ echo ""
 
 if [ -n "$DOCKER_COMPOSE ps -q"  ]
     then
-        note "stopping existing Harbor instance ..." 
+        note "stopping existing Registry instance ..."
         $DOCKER_COMPOSE down -v
 fi
 echo ""
 
-h2 "[Step $item]: starting Harbor ..."
+h2 "[Step $item]: starting Registry ..."
 $DOCKER_COMPOSE up -d
 
-success $"----Harbor has been installed and started successfully.----"
+success $"----Registry has been installed and started successfully.----"

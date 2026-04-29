@@ -12,11 +12,11 @@ Environment file path:- $HOME/workspace/sandbox/scripts/wfm.env
 
 Update the following variables:
 ```bash
-export EXPOSED_HARBOR_HOST=<harbor-machine-hostname-or-ip>
-export EXPOSED_SYMPHONY_HOST=<symphony-machine-hostname-or-ip>
-export EXPOSED_HARBOR_PORT=8443
-export EXPOSED_SYMPHONY_PORT=8082
-export SYMPHONY_BRANCH=main #it can be a tag also
+export REGISTRY_HOST=<registry-machine-hostname-or-ip>
+export WFM_HOST=<symphony-machine-hostname-or-ip>
+export REGISTRY_PORT=8081
+export WFM_PORT=8082
+export WFM_SYMPHONY_BRANCH=main #it can be a tag also
 export SANDBOX_REPO_BRANCH=main #it can be a tag also
 ```
 
@@ -28,6 +28,6 @@ Update the following variables:
 ```bash
 export SANDBOX_REPO_BRANCH=main #it can be a tag also
 export WFM_HOST=<wfm-machine-hostname-or-ip>
-export EXPOSED_HARBOR_HOST=<harbor-machine-hostname-or-ip>
+export REGISTRY_HOST=<registry-machine-hostname-or-ip>
 ```
 

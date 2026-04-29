@@ -120,6 +120,46 @@ func TestDirectoryLoader_Type(t *testing.T) {
 	assert.Equal(t, SourceDirectory, loader.Type())
 }
 
+func TestDirectoryLoader_Load_MixedResourceStructure(t *testing.T) {
+	dir := t.TempDir()
+	createValidDescription(t, dir)
+
+	resourcesDir := filepath.Join(dir, "resources")
+
+	// Create mixed structure with files and directories
+	structure := map[string]string{
+		"resources/icon.png":              "icon-data",
+		"resources/docs/description.md":   "# Test description",
+		"resources/docs/release-notes.md": "# Test Release notes",
+	}
+
+	for relPath, content := range structure {
+		fullPath := filepath.Join(resourcesDir, relPath)
+		require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0750))
+		err := os.WriteFile(fullPath, []byte(content), 0600)
+		require.NoError(t, err)
+	}
+
+	loader := NewDirectoryLoader(defaultConfig())
+	_, pkg, err := loader.Load(context.Background(), dir, &LoadOptions{
+		Validate: true,
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, pkg)
+
+	// Verify all resources are loaded
+	for expectedPath, expectedContent := range structure {
+		assert.Contains(t, pkg.Resources, expectedPath,
+			"Missing resource: %s", expectedPath)
+		assert.Equal(t, []byte(expectedContent), pkg.Resources[expectedPath],
+			"Wrong content for: %s", expectedPath)
+	}
+
+	// Verify total count
+	assert.Len(t, pkg.Resources, len(structure))
+}
+
 // Helper functions
 func createValidTestPackage(t *testing.T, withResources bool) string {
 	dir := t.TempDir()

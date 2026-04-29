@@ -1,0 +1,137 @@
+# poc/wfm/server/docker-compose.yaml
+version: "3.8"
+
+volumes:
+  redis_data:
+    name: margo-redis-data
+
+secrets:
+  registry_ca:
+    file: ${CERT_DIR}/ca-crt.pem
+  registry_cert:
+    file: ${CERT_DIR}/server-cert.pem
+  registry_key:
+    file: ${CERT_DIR}/server-key.pem
+  symphony_ca:
+    file: ${CERT_DIR}/ca-crt.pem
+  symphony_cert:
+    file: ${CERT_DIR}/server-cert.pem
+  symphony_key:
+    file: ${CERT_DIR}/server-key.pem
+
+services:
+  cert-init:
+    # use this service to generate certs for the registry and wfm
+    profiles: ["init"]
+    image: alpine/openssl:latest
+    container_name: wfm-cert-init
+    volumes:
+      - ${CERT_DIR}:/certs
+    environment:
+      - CERT_VALIDITY_DAYS=${CERT_VALIDITY_DAYS:-365}
+      - WFM_HOST=${WFM_HOST:-wfm.internal.margo.org}
+    command:
+      - sh
+      - -c
+      - |
+        # Exit if certificates already exist
+        if [ -f /certs/ca-key.pem ] && [ -f /certs/server-key.pem ]; then
+          echo "✅ WFM certificates already exist at ${CERT_DIR}"
+          exit 0
+        fi
+
+        echo "🔐 Generating WFM certificates..."
+
+        # Generate CA
+        openssl genrsa -out /certs/ca-key.pem 4096
+        openssl req -new -x509 -days $$CERT_VALIDITY_DAYS \
+          -key /certs/ca-key.pem -out /certs/ca-crt.pem \
+          -subj "/C=IN/ST=GGN/L=Sector 48/O=Margo/CN=Margo Root CA"
+
+        # Determine if HOST is IP or DNS
+        IS_IP=$$(echo $$HOST | grep -E '^[0-9.]+$$' && echo "true" || echo "false")
+
+        # Generate Server Certificate with SAN
+        cat > /tmp/server.conf <<EOF
+        [req]
+        default_bits = 2048
+        prompt = no
+        distinguished_name = dn
+        req_extensions = v3_req
+
+        [dn]
+        C=IN
+        ST=GGN
+        L=Sector 48
+        O=Margo
+        CN=$$HOST
+
+        [v3_req]
+        basicConstraints = CA:FALSE
+        keyUsage = keyEncipherment, digitalSignature
+        extendedKeyUsage = serverAuth
+        subjectAltName = @alt_names
+
+        [alt_names]
+        $$(if [ "$$IS_IP" = "true" ]; then echo "IP.1 = $$HOST"; else echo "DNS.1 = $$HOST"; fi)
+        DNS.2 = localhost
+        IP.2 = 127.0.0.1
+        EOF
+
+        openssl genrsa -out /certs/server-key.pem 2048
+        openssl req -new -key /certs/server-key.pem \
+          -out /tmp/server.csr -config /tmp/server.conf
+        openssl x509 -req -in /tmp/server.csr \
+          -CA /certs/ca-crt.pem -CAkey /certs/ca-key.pem \
+          -CAcreateserial -out /certs/server-cert.pem \
+          -days $$CERT_VALIDITY_DAYS \
+          -extensions v3_req -extfile /tmp/server.conf
+
+        # Set restrictive permissions
+        chmod 600 /certs/ca-key.pem /certs/server-key.pem
+        chmod 644 /certs/ca-crt.pem /certs/server-cert.pem
+
+        echo "✅ WFM certificates generated"
+
+  redis:
+    image: redis:${REDIS_VERSION:-7.0.15-alpine}
+    container_name: symphony-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  symphony-api:
+    image: ${SYMPHONY_IMAGE_REF:-ghcr.io/margo/symphony-api:latest}
+    container_name: symphony-api
+    ports:
+      - "8082:8082"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: always
+    environment:
+      LOG_LEVEL: "debug"
+      CONFIG: "symphony-api-margo.json"
+    secrets:
+      - source: registry_ca
+        target: /usr/local/share/ca-certificates/ca-cert.pem
+        mode: 0444
+      - source: symphony_ca
+        target: /certificates/ca-cert.pem
+        mode: 0444
+      - source: symphony_cert
+        target: /certificates/server-cert.pem
+        mode: 0444
+      - source: symphony_key
+        target: /certificates/server-key.pem
+        mode: 0400
+    entrypoint: >
+      sh -c "update-ca-certificates 2>/dev/null || true;
+             exec /symphony-api -c symphony-api-margo.json"

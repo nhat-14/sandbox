@@ -1,15 +1,13 @@
 #!/bin/bash
 set -e
-export PATH="$PATH:/usr/local/go/bin"
 
-# ----------------------------
-# Load environment file
-# ----------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-
+# ----------------------------
+# Environment Loading
+# ----------------------------
 load_device_agent_env() {
-
   if [[ -n "$_DEVICE_ENV_LOADED" ]]; then
     return 0
   fi
@@ -17,6 +15,7 @@ load_device_agent_env() {
 
   local device="${1:-${DEVICE_TYPE:-}}"
 
+  # Prompt if not provided
   if [[ -z "$device" ]]; then
     echo "Select device type:"
     echo "  1) Docker"
@@ -41,274 +40,90 @@ load_device_agent_env() {
     return 1
   fi
 
+  export DEVICE_TYPE="$device"
+  echo "[INFO] Device type selected: $DEVICE_TYPE"
+
+  # Load environment file
   local env_file="$SCRIPT_DIR/device-agent.env"
-  if [[ ! -f "$env_file" ]]; then
-    echo "[ERROR] Env file not found: $env_file"
+  if [[ -f "$env_file" ]]; then
+    set -a
+    source "$env_file"
+    set +a
+  else
+    echo "[WARN] device-agent.env not found at: $env_file"
+  fi
+}
+
+# ----------------------------
+# Taskfile Wrapper
+# ----------------------------
+check_taskfile() {
+  if ! command -v task &> /dev/null; then
+    echo "⚠️  Taskfile not found. Installing..."
+    curl -sL https://taskfile.dev/install.sh | sh -s -- -d -b /usr/local/bin
+    echo "✅ Taskfile installed"
+  fi
+}
+
+check_taskfile
+
+# Run task from project root with environment variables
+run_task() {
+  (
+    cd "$PROJECT_ROOT"
+    # Export all variables that Taskfiles need
+    export DEVICE_TYPE="${DEVICE_TYPE}"
+    export REGISTRY_HOST="${REGISTRY_HOST:-127.0.0.1}"
+    export REGISTRY_PORT="${REGISTRY_PORT:-5000}"
+    export WFM_HOST="${WFM_HOST:-127.0.0.1}"
+    export WFM_PORT="${WFM_PORT:-8082}"
+    export SANDBOX_REPO_BRANCH="${SANDBOX_REPO_BRANCH:-main}"
+
+    task "$@"
+  )
+}
+
+# ----------------------------
+# Registry Certificate Helper
+# ----------------------------
+copy_registry_certs_to_agent() {
+  local registry_cert_dir="$PROJECT_ROOT/poc/app-registry/.local/certificates"
+  local agent_cert_dir="$PROJECT_ROOT/poc/device/agent/.local/certificates"
+
+
+  if [[ ! -d "$registry_cert_dir" ]]; then
+    echo "[ERROR] Registry certificates not found at: $registry_cert_dir"
+    echo "[INFO] Please copy the registry certificates manually"
     return 1
   fi
 
-  export DEVICE_TYPE="$device"
+  mkdir -p "$agent_cert_dir"
 
-  echo "[INFO] Device type selected: $DEVICE_TYPE"
-  #echo "[INFO] Loading environment: $env_file"
-
-  set -a
-  source "$env_file"
-  set +a
-}
-load_device_agent_env "$1" 2>/dev/null || true
-
-# ----------------------------
-# Environment & Validation Functions
-# ----------------------------
-
-#--- Github Settings to pull the code (can be overridden via env)
-GITHUB_USER="${GITHUB_USER:-}"  # Set via env or leave empty
-GITHUB_TOKEN="${GITHUB_TOKEN:-}"  # Set via env or leave empty
-
-#--- harbor settings (can be overridden via env)
-EXPOSED_HARBOR_HOST="${EXPOSED_HARBOR_HOST:-localhost}"
-EXPOSED_HARBOR_PORT="${EXPOSED_HARBOR_PORT:-8443}"
-
-#--- branch details (can be overridden via env)
-SANDBOX_REPO_BRANCH="${SANDBOX_REPO_BRANCH:-dev-sprint-6}"
-WFM_HOST="${WFM_HOST:-localhost}"
-WFM_PORT="${WFM_PORT:-8082}"
-
-
-#--- Registry settings (can be overridden via env)
-REGISTRY_URL="${REGISTRY_URL:-http://${EXPOSED_HARBOR_HOST}:${EXPOSED_HARBOR_PORT}}"
-REGISTRY_USER="${REGISTRY_USER:-admin}"
-REGISTRY_PASS="${REGISTRY_PASS:-Harbor12345}"
-
-# variables for observability stack
-NAMESPACE_OBSERVABILITY="observability"
-PROMTAIL_RELEASE="promtail"
-OTEL_RELEASE="otel-collector"
-
-# Pinned software versions (can be overridden via env)
-DOCKER_VERSION="${DOCKER_VERSION:-29.1.2}"
-DOCKER_COMPOSE_VERSION="${DOCKER_COMPOSE_VERSION:-5.0.0}"
-
-# Stable version as of December 2024
-K3S_VERSION="${K3S_VERSION:-v1.31.4+k3s1}"
-
-# ----------------------------
-# GHCR Image References
-# ----------------------------
-GHCR_REGISTRY="ghcr.io"
-GHCR_ORG="margo"
-workload_Fleet_Management_Client_IMAGE="margo.org/workload-fleet-management-client"
-workload_Fleet_Management_Client_IMAGE_TAG="latest"
-workload_Fleet_Management_Client_IMAGE_REF="${GHCR_REGISTRY}/${GHCR_ORG}/${workload_Fleet_Management_Client_IMAGE}:${workload_Fleet_Management_Client_IMAGE_TAG}"
-
-# Load shared library
-source "${SCRIPT_DIR}/lib/common.sh"
-
-# Load all WFM modules
-source "${SCRIPT_DIR}/modules/docker.sh"
-source "${SCRIPT_DIR}/modules/go.sh"
-source "${SCRIPT_DIR}/modules/helm.sh"
-source "${SCRIPT_DIR}/modules/repositories.sh"
-source "${SCRIPT_DIR}/modules/k3s.sh"
-source "${SCRIPT_DIR}/modules/harbor.sh"
-source "${SCRIPT_DIR}/modules/certificates.sh"
-source "${SCRIPT_DIR}/modules/agent.sh"
-source "${SCRIPT_DIR}/modules/observability.sh"
-
-
-export GOINSECURE='github.com/margo/*'
-export GONOPROXY='github.com/margo/*'
-export GONOSUMDB='github.com/margo/*'
-export GOPRIVATE='github.com/margo/*'
-
-validate_pre_required_vars() {
-  local required_vars=("SANDBOX_REPO_BRANCH" "WFM_HOST" "WFM_PORT")
-  for var in "${required_vars[@]}"; do
-    if [ -z "${!var}" ]; then
-      echo "Error: Required environment variable $var is not set"
-      exit 1
-    fi
-  done
-}
-
-validate_start_required_vars() {
-  local required_vars=("WFM_HOST" "WFM_PORT")
-  for var in "${required_vars[@]}"; do
-    if [ -z "${!var}" ]; then
-      echo "Error: Required environment variable $var is not set"
-      exit 1
-    fi
-  done
-}
-
-# ----------------------------
-# Go Installation Functions
-# ----------------------------
-install_basic_utilities() {
-  sudo apt update -y
-  sudo apt install -y curl git dos2unix build-essential gcc libc6-dev
-  echo "Installation complete: curl, git, and build tools installed."
-
-  # Only install Helm for k3s device type
-  if [ "$DEVICE_TYPE" = "k3s" ]; then
-    INSTALL_HELM_V3_15_1=true
-    HELM_VERSION="3.15.1"
-    HELM_TAR="helm-v${HELM_VERSION}-linux-amd64.tar.gz"
-    HELM_BIN_DIR="/usr/local/bin"
-    install_helm
-    echo "✅ Helm installed for k3s device"
+  # Copy registry CA certificate
+  if [[ -f "$registry_cert_dir/ca-crt.pem" ]]; then
+    cp "$registry_cert_dir/ca-crt.pem" "$agent_cert_dir/registry-ca-crt.pem"
+    echo "✅ Copied registry CA certificate to agent"
   else
-    echo "ℹ️ Skipping Helm installation for docker device type"
+    echo "[ERROR] Registry CA certificate not found"
+    return 1
   fi
 }
 
-
 # ----------------------------
-# Main Orchestration Functions
+# Agent Status
 # ----------------------------
-install_prerequisites() {
-  echo "Installing prerequisites: k3s and others ..."
-  validate_pre_required_vars
-  install_go
-  install_basic_utilities
-  install_docker_and_compose
-  clone_dev_repo
-  # Only install k3s for k3s device type
-  if [ "$DEVICE_TYPE" = "k3s" ]; then
-    setup_k3s
-    configure_harbor_trust_for_k3s
-  fi
-
-  echo 'prerequisites installation completed.'
-}
-
-
-start_device_agent_docker() {
-  echo "Building and starting workload-fleet-management-client ..."
-  validate_start_required_vars
-  update_agent_sbi_url
-  build_device_agent_docker
-  start_device_agent_docker_service
-  echo 'workload-fleet-management-client docker-container started'
-}
-
-start_device_agent_kubernetes() {
-  echo "Building and starting workload-fleet-management-client with ServiceAccount authentication..."
-  validate_start_required_vars
-  build_start_device_agent_k3s_service
-  echo '✅ workload-fleet-management-client-pod started with ServiceAccount authentication'
-}
-
-stop_device_agent_docker() {
-  echo "Stopping workload-fleet-management-client ..."
-  stop_device_agent_service_docker
-  echo "Device's Workload Fleet Management Client stopped"
-}
-
-
-uninstall_prerequisites() {
-  cleanup_device_agent
-}
-
-create_observability_systemd_service() {
-  echo "🔧 Creating systemd service for observability (OTEL + Promtail) auto-start..."
-
-  local obs_dir="$HOME/sandbox/scripts/observability"
-
-  # Create systemd unit file
-  sudo tee /etc/systemd/system/observability.service > /dev/null <<EOF
-[Unit]
-Description=Margo Observability Stack (OTEL Collector + Promtail)
-Requires=docker.service
-After=docker.service network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=${obs_dir}
-ExecStartPre=/bin/sleep 10
-ExecStart=/usr/bin/docker compose -f docker-compose-observability.yml up -d
-ExecStop=/usr/bin/docker compose -f docker-compose-observability.yml down
-TimeoutStartSec=0
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-  # Reload systemd and enable the service so it runs at boot
-  sudo systemctl daemon-reload
-  sudo systemctl enable observability.service
-
-  echo "✅ Observability systemd service created and enabled"
-  echo "📋 Service will run: /usr/bin/docker compose -f docker-compose-observability.yml up -d"
-  echo "📁 Working directory: ${obs_dir}"
-}
-
-cleanup_residual() {
-  rm -rf "$HOME/sandbox"
-  rm -rf "$HOME/symphony"
-}
-
-create_device_rsa_certs() {
-  CERT_DIR="$HOME/certs"
-
-  # If certs exists but is not a directory, remove it
-  if [ -e "$CERT_DIR" ] && [ ! -d "$CERT_DIR" ]; then
-    echo "[WARNING] $CERT_DIR exists but is not a directory — removing."
-    rm -f "$CERT_DIR"
-  fi
-
-  mkdir -p "$CERT_DIR"
-  cd "$CERT_DIR" || exit 1
-
-  echo "Generating RSA device certs..."
-  # Generate RSA private key (2048-bit)
-  openssl genrsa -out device-private.key 2048
-
-  # Generate self-signed certificate
-  openssl req -new -x509 -key device-private.key -out device-public.crt -days 365 \
-    -subj "/C=IN/ST=GGN/L=Sector 48/O=Margo/CN=margo-device"
-  echo "✅ RSA Cert generation has been completed."
-
-
-
-}
-
-create_device_ecdsa_certs() {
-  CERT_DIR="$HOME/certs"
-
-  if [ ! -d "$CERT_DIR" ]; then
-    echo "Cert directory not found. Creating $CERT_DIR ..."
-    mkdir -p "$CERT_DIR"
-  else
-    echo "Using existing cert directory: $CERT_DIR"
-  fi
-
-  cd "$CERT_DIR" || exit 1
-  echo "Generating ECDSA device certs..."
-  # Generate ECDSA private key (P-256 curve)
-  openssl ecparam -genkey -name prime256v1 -out device-ecdsa.key
-
-  # Generate self-signed certificate
-  openssl req -new -x509 -key device-ecdsa.key -out device-ecdsa.crt -days 365 \
-    -subj "/C=IN/ST=GGN/L=Sector 48/O=Margo/CN=margo-device"
-  echo "✅ ECDSA Cert generation has been completed."
-
-
-
-}
-pause() {
-  echo
-  read -rp "Press Enter to continue..." _
+show_status() {
+  echo "Checking device agent status..."
+  run_task agent:status
 }
 
 # ----------------------------
-# Menu Functions
+# Menu
 # ----------------------------
-
 show_menu() {
+  clear
+  echo "Device Type: $DEVICE_TYPE"
+  echo ""
   echo "Choose an option:"
   echo "1) Install-prerequisites"
   echo "2) Uninstall-prerequisites"
@@ -320,32 +135,73 @@ show_menu() {
   echo "8) OTEL-collector-promtail-installation"
   echo "9) OTEL-collector-promtail-uninstallation"
   echo "10) cleanup-residual"
-  echo "11) create_device_rsa_certs"
-  echo "12) create_device_ecdsa_certs"
-  echo "13) Exit"
-  read -rp "Enter choice [1-13]: " choice
+  echo "11) Exit"
+  read -rp "Enter choice [1-11]: " choice
+
   case $choice in
-    1) install_prerequisites;;
-    2) uninstall_prerequisites;;
-    3) start_device_agent_docker ;;
-    4) stop_device_agent_docker ;;
-    5) start_device_agent_kubernetes ;;
-    6) stop_device_agent_kubernetes ;;
-    7) show_status ;;
-    8) install_otel_collector_promtail_wrapper ;;
-    9) uninstall_otel_collector_promtail_wrapper ;;
-    10) cleanup_residual;;
-    11) create_device_rsa_certs ;;
-    12) create_device_ecdsa_certs ;;
-    13) echo "👋 Goodbye!"; exit 0 ;;
-    *) echo "Invalid choice" ;;
+    1)
+      if [[ "$DEVICE_TYPE" == "docker" ]]; then
+        run_task bootstrap:docker
+      else
+        run_task bootstrap:k3s
+      fi
+      ;;
+    2)
+      if [[ "$DEVICE_TYPE" == "docker" ]]; then
+        run_task nuke:docker
+      else
+        run_task nuke:k3s
+      fi
+      ;;
+    3)
+      copy_registry_certs_to_agent || return 1
+      run_task agent:up TARGET=docker
+      ;;
+    4)
+      run_task agent:down
+      ;;
+    5)
+      copy_registry_certs_to_agent || return 1
+      run_task agent:start-helm TARGET=kubernetes
+      ;;
+    6)
+      run_task agent:stop-helm
+      ;;
+    7)
+      show_status
+      ;;
+    8)
+      if [[ "$DEVICE_TYPE" == "docker" ]]; then
+        run_task obs-collector:up
+      else
+        run_task obs-collector:helm-install
+      fi
+      ;;
+    9)
+      if [[ "$DEVICE_TYPE" == "docker" ]]; then
+        run_task obs-collector:down
+      else
+        run_task obs-collector:uninstall
+      fi
+      ;;
+    10)
+      run_task nuke
+      ;;
+    11)
+      echo "👋 Goodbye!"
+      exit 0
+      ;;
+    *)
+      echo "⚠️ Invalid choice"
+      ;;
   esac
 
-  pause
+  echo ""
+  read -rp "Press Enter to continue..."
 }
 
 # ----------------------------
-# Main Script Execution
+# Main Loop
 # ----------------------------
 main_loop() {
   while true; do
@@ -353,9 +209,11 @@ main_loop() {
   done
 }
 
-
+# ----------------------------
+# Main Execution
+# ----------------------------
 if [[ -z "$1" ]]; then
-  # No arguments - prompt for device type FIRST, then run interactive menu
+  # No arguments - prompt for device type, then run interactive menu
   if ! load_device_agent_env; then
     echo "[ERROR] Failed to load device agent environment"
     exit 1
@@ -372,28 +230,65 @@ elif [[ "$1" == "docker" || "$1" == "k3s" ]] && [[ -z "$2" ]]; then
 
 elif [[ "$1" == "docker" || "$1" == "k3s" ]] && [[ -n "$2" ]]; then
   # Device type + command - execute command
+  if ! load_device_agent_env "$1"; then
+    echo "[ERROR] Failed to load device agent environment"
+    exit 1
+  fi
+
   case "$2" in
-    install) install_prerequisites ;;
-    uninstall) uninstall_prerequisites ;;
-    start-docker) start_device_agent_docker ;;
-    stop-docker) stop_device_agent_docker ;;
-    start-k3s) start_device_agent_kubernetes ;;
-    stop-k3s) stop_device_agent_kubernetes ;;
-    status) show_status ;;
-    otel-install) install_otel_collector_promtail_wrapper ;;
-    otel-uninstall) uninstall_otel_collector_promtail_wrapper ;;
-    cleanup) cleanup_residual ;;
-    create-rsa-certs) create_device_rsa_certs ;;
-    create-ecdsa-certs) create_device_ecdsa_certs ;;
+    install)
+      if [[ "$DEVICE_TYPE" == "docker" ]]; then
+        run_task bootstrap:docker
+      else
+        run_task bootstrap:k3s
+      fi
+      ;;
+    uninstall)
+      run_task nuke
+      ;;
+    start-docker)
+      copy_registry_certs_to_agent || exit 1
+      run_task agent:up TARGET=docker
+      ;;
+    stop-docker)
+      run_task agent:down
+      ;;
+    start-k3s)
+      copy_registry_certs_to_agent || exit 1
+      run_task agent:start-helm TARGET=kubernetes
+      ;;
+    stop-k3s)
+      run_task agent:stop-helm
+      ;;
+    status)
+      show_status
+      ;;
+    otel-install)
+      if [[ "$DEVICE_TYPE" == "docker" ]]; then
+        run_task obs-collector:up
+      else
+        run_task obs-collector:helm-install
+      fi
+      ;;
+    otel-uninstall)
+      if [[ "$DEVICE_TYPE" == "docker" ]]; then
+        run_task obs-collector:down
+      else
+        run_task obs-collector:uninstall
+      fi
+      ;;
+    cleanup)
+      run_task nuke
+      ;;
     *)
       echo "[ERROR] Unknown command: $2"
-      echo "Available: install, uninstall, start-docker, stop-docker, start-k3s, stop-k3s, status, otel-install, otel-uninstall, cleanup, create-rsa-certs, create-ecdsa-certs"
+      echo "Available: install, uninstall, start-docker, stop-docker, start-k3s, stop-k3s, status, otel-install, otel-uninstall, cleanup"
       exit 1
       ;;
   esac
 
 else
-  # Invalid usage - device type is mandatory
+  # Invalid usage
   echo "[ERROR] Invalid usage. Device type (docker/k3s) is required."
   echo ""
   echo "Usage Examples:"

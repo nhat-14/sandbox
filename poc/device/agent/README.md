@@ -131,7 +131,7 @@ wfm:
       enabled: true
       # path to the ca certificate that will be used to verify server certificates
       caKeyRef:
-        path: "./config/ca-cert.pem"
+        path: "./config/wfm-ca.crt"
 
 stateSeeking:
   # How frequently the workload-fleet-management-client attempts to seek for the desired state from wfm

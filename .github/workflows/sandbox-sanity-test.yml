@@ -13,8 +13,8 @@ on:
       - development
   workflow_dispatch:
     inputs:
-      symphony_branch_override:
-        description: "Override SYMPHONY_BRANCH"
+      WFM_SYMPHONY_BRANCH_override:
+        description: "Override WFM_SYMPHONY_BRANCH"
         required: false
         default: "development"
       sandbox_repo_branch_override:
@@ -28,12 +28,14 @@ jobs:
     env:
       CI: "true"
       # Branches
-      SYMPHONY_BRANCH: ${{ github.event.inputs.symphony_branch_override || 'development' }}
+      WFM_SYMPHONY_BRANCH: ${{ github.event.inputs.WFM_SYMPHONY_BRANCH_override || 'development' }}
       SANDBOX_REPO_BRANCH: ${{ github.event.inputs.sandbox_repo_branch_override || 'development' }}
 
-      # Ports
-      EXPOSED_HARBOR_PORT: 8443
-      EXPOSED_SYMPHONY_PORT: 8082
+      REGISTRY_HOST: "registry.machine"
+      REGISTRY_PORT: "5000"  # ✅ Correct port for OCI registry
+      WFM_HOST: "symphony.machine"
+      WFM_PORT: "8082"
+
       # Optional auth
       GITHUB_USER: ""
       GITHUB_TOKEN: ""
@@ -41,8 +43,8 @@ jobs:
       APP_PACKAGE_NAME_DOCKER: nextcloud-compose-app-package
       MAESTRO_CLI_PATH: "/home/runner/symphony/cli"
       REGISTRY_USER: "admin"
-      REGISTRY_PASS: "${{ secrets.HARBOR_PASSWORD }}"
-      REGISTRY: "harbor.machine:8443"
+      REGISTRY_PASS: "${{ secrets.REGISTRY_PASSWORD }}"
+      REGISTRY: "registry.machine:5000"
 
     steps:
 
@@ -87,7 +89,7 @@ jobs:
       - name: Environment - Configure /etc/hosts
         run: |
           echo "🔧 Updating /etc/hosts"
-          echo "${RUNNER_IP} harbor.machine" | sudo tee -a /etc/hosts
+          echo "${RUNNER_IP} registry.machine" | sudo tee -a /etc/hosts
           echo "${RUNNER_IP} symphony.machine" | sudo tee -a /etc/hosts
           echo "✅ /etc/hosts updated:"
 
@@ -95,9 +97,9 @@ jobs:
         run: |
           cat > scripts/wfm.env <<EOF
           CI=true
-          EXPOSED_HARBOR_HOST=harbor.machine
-          EXPOSED_SYMPHONY_HOST=symphony.machine
-          SYMPHONY_BRANCH=${SYMPHONY_BRANCH}
+          REGISTRY_HOST=registry.machine
+          WFM_HOST=symphony.machine
+          WFM_SYMPHONY_BRANCH=${WFM_SYMPHONY_BRANCH}
           SANDBOX_REPO_BRANCH=${SANDBOX_REPO_BRANCH}
           GITHUB_USER=${GITHUB_USER}
           GITHUB_TOKEN=${GITHUB_TOKEN}
@@ -109,7 +111,7 @@ jobs:
 
           cat > scripts/device-agent.env <<EOF
           CI=true
-          EXPOSED_HARBOR_HOST=harbor.machine
+          REGISTRY_HOST=registry.machine
           WFM_HOST=symphony.machine
           WFM_PORT=8082
           SANDBOX_REPO_BRANCH=${SANDBOX_REPO_BRANCH}
@@ -196,18 +198,18 @@ jobs:
           export DOCKER_CONFIG=$(mktemp -d)
           echo "Using DOCKER_CONFIG=$DOCKER_CONFIG"
 
-          # Trust Harbor CA certificate first
-          HARBOR_CERT="$HOME/sandbox/scripts/harbor/certs/harbor.crt"
-          if [ -f "$HARBOR_CERT" ]; then
-            sudo cp "$HARBOR_CERT" /usr/local/share/ca-certificates/harbor.crt
+          # Trust Registry CA certificate first
+          REGISTRY_CERT="$HOME/sandbox/scripts/harbor/certs/harbor.crt"
+          if [ -f "$REGISTRY_CERT" ]; then
+            sudo cp "$REGISTRY_CERT" /usr/local/share/ca-certificates/harbor.crt
             sudo update-ca-certificates
-            echo "✅ Harbor CA certificate trusted"
+            echo "✅ Registry CA certificate trusted"
           else
-            echo "⚠️ Harbor certificate not found at $HARBOR_CERT"
+            echo "⚠️ Registry certificate not found at $REGISTRY_CERT"
           fi
 
-          # Login to Harbor with HTTPS
-          echo "${REGISTRY_PASS}" | oras login harbor.machine:${EXPOSED_HARBOR_PORT} \
+          # Login to Registry with HTTPS
+          echo "${REGISTRY_PASS}" | oras login registry.machine:${REGISTRY_PORT} \
             -u "${REGISTRY_USER}" \
             --password-stdin
 
@@ -215,16 +217,16 @@ jobs:
           chmod 700 "$DOCKER_CONFIG"
           find "$DOCKER_CONFIG" -type f -exec chmod 600 {} \;
 
-          echo "✅ ORAS authenticated to Harbor (HTTPS)"
+          echo "✅ ORAS authenticated to Registry (HTTPS)"
 
 
       - name: WFM - Copy the CA certs
         run: |
           CERT="$HOME/symphony/api/certificates/ca-cert.pem"
-          Harbor_CERT="$HOME/sandbox/scripts/harbor/certs/harbor.crt"
+          REGISTRY_CERT="$HOME/sandbox/scripts/harbor/certs/harbor.crt"
           mkdir -p "$HOME/certs"
           cp "$CERT" "$HOME/certs/"
-          cp "$Harbor_CERT" "$HOME/certs/"
+          cp "$REGISTRY_CERT" "$HOME/certs/"
           echo "✅ CA certs copied to $HOME/certs/"
 
 
@@ -311,7 +313,7 @@ jobs:
             /hosts \/etc\/coredns\/NodeHosts/ {
               print
               getline
-              print "        " ip " harbor.machine"
+              print "        " ip " registry.machine"
               print "        " ip " symphony.machine"
               print
               next
@@ -320,7 +322,7 @@ jobs:
             ' config.yaml > config-new.yaml
 
             # Verify the change was made
-            if grep -q "harbor.machine" config-new.yaml && grep -q "symphony.machine" config-new.yaml; then
+            if grep -q "registry.machine" config-new.yaml && grep -q "symphony.machine" config-new.yaml; then
               echo "✅ DNS entries added to ConfigMap"
 
               # Apply the updated ConfigMap
@@ -392,13 +394,13 @@ jobs:
           echo "🔍 Verifying DNS resolution in WFM-Client pod..."
           POD_NAME=$(sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get pods \
             -o name | grep workload-fleet-management-client | head -1 | cut -d'/' -f2)
-          echo "Testing DNS resolution for harbor.machine..."
+          echo "Testing DNS resolution for registry.machine..."
           for i in {1..30}; do
             if sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl exec "$POD_NAME" -- \
-              nslookup harbor.machine >/dev/null 2>&1; then
+              nslookup registry.machine >/dev/null 2>&1; then
               RESOLVED_IP=$(sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl exec "$POD_NAME" -- \
-                nslookup harbor.machine 2>/dev/null | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | head -1)
-              echo "✅ DNS working - harbor.machine resolves to: $RESOLVED_IP"
+                nslookup registry.machine 2>/dev/null | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | head -1)
+              echo "✅ DNS working - registry.machine resolves to: $RESOLVED_IP"
               if [ "$RESOLVED_IP" = "${RUNNER_IP}" ]; then
                 echo "✅ DNS resolves to correct IP (${RUNNER_IP})"
                 break
@@ -411,7 +413,7 @@ jobs:
           done
           # Final verification with detailed output
           echo "Final DNS check:"
-          sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl exec "$POD_NAME" -- nslookup harbor.machine || {
+          sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl exec "$POD_NAME" -- nslookup registry.machine || {
             echo "❌ DNS still not working after 60 seconds"
             echo ""
             echo "Debugging information:"

@@ -1,0 +1,22 @@
+replicaCount: 1
+
+image:
+  repository: { ? { REPOSITORY } }
+  tag: { ? { TAG } }
+  pullPolicy: Always # Prevents Kubernetes from trying to pull from Docker Hub
+
+env:
+  #OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector-opentelemetry-collector.observability:4318"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector-opentelemetry-collector.obs\
+    ervability.svc.cluster.local:4318"
+
+service:
+  type: ClusterIP
+  port: 80
+
+collector:
+  name: collector
+
+# Support for fullnameOverride (used by workload-fleet-management-client)
+fullnameOverride: ""
+nameOverride: ""

@@ -1,0 +1,231 @@
+# sandbox/Taskfile.yaml
+version: "3"
+
+vars:
+  # === VERSIONS (Single Source of Truth) ===
+  GO_VERSION: "1.24.7"
+  K3S_VERSION: "v1.31.4+k3s1"
+  DOCKER_VERSION: "29.1.2"
+  JAEGER_VERSION: "1.53.0"
+  LOKI_VERSION: "2.9.10"
+  GRAFANA_VERSION: "10.3.0"
+  PROMETHEUS_VERSION: "v2.45.0"
+  OTEL_VERSION: "0.140.0"
+  REDIS_VERSION: "7.0.15-alpine"
+  REGISTRY_VERSION: "2.8.3"
+
+  # === DYNAMIC DISCOVERY ===
+  HOST_IP: { sh: "hostname -I | awk '{print $1}' || echo 127.0.0.1" }
+
+  # === SERVICE ENDPOINTS ===
+  REGISTRY_HOST: "{{.HOST_IP}}"
+  REGISTRY_PORT: "5000"
+  WFM_HOST: "{{.HOST_IP}}"
+  WFM_PORT: "8082"
+
+env:
+  PATH: "{{.BIN_DIR}}:{{.PATH}}"
+  HOST_IP: "{{.HOST_IP}}"
+  REGISTRY_HOST: "{{.REGISTRY_HOST}}"
+  REGISTRY_PORT: "{{.REGISTRY_PORT}}"
+  WFM_HOST: "{{.WFM_HOST}}"
+  WFM_PORT: "{{.WFM_PORT}}"
+
+includes:
+  tools:
+    taskfile: ./tools/Taskfile.yaml
+    dir: ./tools
+    vars:
+      GO_VERSION: "{{.GO_VERSION}}"
+      DOCKER_VERSION: "{{.DOCKER_VERSION}}"
+      K3S_VERSION: "{{.K3S_VERSION}}"
+
+  gen:
+    taskfile: ./standard/Taskfile.yaml
+    dir: ./standard
+
+  wfm-server:
+    taskfile: ./poc/wfm/server/Taskfile.yaml
+    dir: ./poc/wfm/server
+    vars:
+      HOST: "{{.WFM_HOST}}"
+
+  agent:
+    taskfile: ./poc/device/agent/Taskfile.yaml
+    dir: ./poc/device/agent
+    vars:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+      LOCAL_DIR: "{{.LOCAL_DIR}}"
+      CONFIG_DIR: "{{.CONFIG_DIR}}"
+      CERT_DIR: "{{.CERT_DIR}}"
+      DATA_DIR: "{{.DATA_DIR}}"
+      WFM_HOST: "{{.WFM_HOST}}"
+      WFM_PORT: "{{.WFM_PORT}}"
+
+  obs-backend:
+    taskfile: ./poc/observability/backend/Taskfile.yaml
+    dir: ./poc/observability/backend
+    vars:
+      WFM_HOST: "{{.WFM_HOST}}"
+      DEVICE_TYPE: "docker"
+      VER_JAEGER: "{{.JAEGER_VERSION}}"
+      VER_LOKI: "{{.LOKI_VERSION}}"
+      VER_OTEL: "{{.OTEL_VERSION}}"
+
+  obs-collector:
+    taskfile: ./poc/observability/collector/Taskfile.yaml
+    dir: ./poc/observability/collector
+    vars:
+      WFM_HOST: "{{.WFM_HOST}}"
+      DEVICE_TYPE: "docker"
+      VER_JAEGER: "{{.JAEGER_VERSION}}"
+      VER_LOKI: "{{.LOKI_VERSION}}"
+      VER_OTEL: "{{.OTEL_VERSION}}"
+
+  registry:
+    taskfile: ./poc/app-registry/Taskfile.yaml
+    dir: ./poc/app-registry
+    vars:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+      REGISTRY_HOST: "{{.REGISTRY_HOST}}"
+      REGISTRY_PORT: "{{.REGISTRY_PORT}}"
+    env:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+
+  app-supplier:
+    taskfile: ./poc/app-supplier/Taskfile.yaml
+    dir: ./poc/app-supplier
+    vars:
+      PROJECT_ROOT: "{{.PROJECT_ROOT}}"
+      REGISTRY_HOST: "{{.REGISTRY_HOST}}"
+      REGISTRY_PORT: "{{.REGISTRY_PORT}}"
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list
+
+  dev:
+    desc: "Setup the dev environment on your linux machine(supported: ubuntu)"
+    cmds:
+      - task: tools:install:dev-tools
+      - task: tools:install:docker
+
+  bootstrap:
+    desc: "Initialize prerequisites"
+    cmds:
+      - task: tools:install:dev-tools
+      - task: tools:install:docker
+      - task: tools:install:k3s
+
+  bootstrap:docker:
+    desc: "Install prerequisites for Docker device"
+    cmds:
+      - task: tools:install:dev-tools
+      - task: tools:install:docker
+
+  bootstrap:k3s:
+    desc: "Install prerequisites for K3s device"
+    cmds:
+      - task: tools:install:dev-tools
+      - task: tools:install:docker
+      - task: tools:install:k3s
+
+  nuke:
+    desc: "WARNING: Cleans-up/Uninstalls the entire environment(dev-tools, builds,
+      docker, k3s)"
+    cmds:
+      - task: obs-collector:down
+      - task: agent:down
+      - task: obs-backend:down
+      - task: wfm:down
+      - task: tools:uninstall:k3s
+      - task: tools:uninstall:docker
+      - task: tools:uninstall:dev-tools
+
+  nuke:docker:
+    desc: "WARNING: Cleans-up/Uninstalls the entire docker environment(dev-tools,
+      builds, docker)"
+    cmds:
+      - task: tools:uninstall:docker
+      - task: tools:uninstall:dev-tools
+
+  nuke:k3s:
+    desc: "WARNING: Cleans-up/Uninstalls the entire k3s environment(dev-tools,
+      builds, k3s)"
+    cmds:
+      - task: tools:uninstall:k3s
+      - task: tools:uninstall:docker
+      - task: tools:uninstall:dev-tools
+
+  # === BUILD ===
+  build:all:
+    desc: "Build all components"
+    cmds:
+      - task: wfm-server:build
+      - task: agent:build
+
+  clean:
+    desc: "Clean everything"
+    prompt: "Delete all state?"
+    cmds:
+      # - task: device:down
+      # - task: wfm:down
+      - task: agent:clean
+      - task: wfm-server:clean
+
+  # === STACK ORCHESTRATION ===
+  wfm:up:
+    desc: |
+      Starts the docker based stack of wfm including cert-initiation,
+      wfm, oci registy and observability backend
+    cmds:
+      - task: registry:up
+      - task: wfm-server:up
+      - task: obs-backend:up
+
+  wfm:down:
+    desc: |
+      Stop the docker based stack of wfm including
+      wfm, oci registy and observability backend
+    cmds:
+      - task: obs-backend:down
+      - task: wfm-server:down
+      - task: registry:down
+
+  device:up:
+    desc: |
+      Starts the docker based stack of device agent including cert-initiation,
+      device agent and observability collector
+    cmds:
+      - task: agent:up
+      - task: obs-collector:up
+
+  device:down:
+    desc: |
+      Stops the docker instance of the device agent and
+    cmds:
+      - task: obs-collector:down
+      - task: agent:down
+
+  # === TESTING ===
+  app-supplier-test:
+    desc: |
+      Triggers e2e flow of app-supplier test with sample applications(nextcloud and otel)
+    cmds:
+      - task: registry:up
+      - task: app-supplier:push:nextcloud
+      - task: app-supplier:push:otel
+      - task: app-supplier:cleanup
+
+  test:e2e:
+    desc: "Run E2E test for docker based device"
+    deps: [ wmf:up, obs-backend:up, agent:up, agent:install, obs-collector:up ]
+    cmds:
+      - task: app-supplier:push:nextcloud
+      - task: app-supplier:push:otel
+      - task: end-user:find-my-docker-device
+      - task: end-user:find-nextcloud-from-marketplace-and-deploy
+      - task: end-user:find-my-kubernetes-device
+      - task: end-user:select-otel-from-marketplace-and-deploy

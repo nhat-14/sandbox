@@ -62,7 +62,7 @@ Development toolsets used and their purposes:
   - Storing and managing Docker images and helm artefacts
   - Image security scanning and vulnerability management
   - Management of workload packages as per MARGO defined specification
-  - Nextcloud, Nginx and Custom OTEL workload packages are  uploaded to Harbor while environment setup. These [Margo Packages](../poc/tests/artefacts) are based on MARGO application description specification
+  - Nextcloud, Nginx and Custom OTEL workload packages are  uploaded to Registry while environment setup. These [Margo Packages](../poc/tests/artefacts) are based on MARGO application description specification
   - API-based repository creation and management
 
 ---

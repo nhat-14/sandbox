@@ -14,14 +14,14 @@ Examples:
 - ❌ `nginx` (missing suffix)
 - ❌ `wordpress-compose` (missing `-app-package`)
 
-**Point-2** : Ensure all artifacts **helm charts, docker images and application package itself** related to an application must be pushed to Harbor OCI .
+**Point-2** : Ensure all artifacts **helm charts, docker images and application package itself** related to an application must be pushed to Registry OCI .
 
 **Point-3** : Ensure to upload all artifacts on default **library** project/repository on Harbor.
 
 ---
 
 ### Below are example commands for your reference.
-> **Note** 172.19.59.148:8443 is Harbor IP and Port
+> **Note** 172.19.59.148:8081 is Registry IP and Port
 
 **Push Images**
 ```bash
@@ -29,13 +29,13 @@ Examples:
 docker pull nginx:1.25.0
 
 ## Tag for Harbor
-docker tag nginx:1.25.0 172.19.59.148:8443/library/nginx:1.25.0
+docker tag nginx:1.25.0 ${REGISTRY_HOST}:${REGISTRY_PORT}/library/nginx:1.25.0
 
 ## Login to Harbor
-docker login 172.19.59.148:8443 -u admin -p Harbor12345
+docker login ${REGISTRY_HOST}:${REGISTRY_PORT} -u admin -p Harbor12345
 
 ## Push to Harbor
-docker push 172.19.59.148:8443/library/nginx:1.25.0
+docker push 172.19.59.148:8081/library/nginx:1.25.0
 ```
 
 **Push Helm Chart**
@@ -44,18 +44,18 @@ docker push 172.19.59.148:8443/library/nginx:1.25.0
 ```bash
 # To push Helm Chart (. is the current directory where all helmcharts are present navigate to the directory and run below commands)
 helm package .
-helm push nginx-helm-1.0.0.tgz oci://172.19.59.148:8443/library --plain-http
+helm push nginx-helm-1.0.0.tgz oci://${REGISTRY_HOST}:${REGISTRY_PORT}/library --insecure-skip-tls-verify --plain-http
 ```
 
 **Push Application Package**
-> Ensure to push package with tag **latest** as while pulling from the harbor the tag latest will be considered.
+> Ensure to push package with tag **latest** as while pulling from the Registry the tag latest will be considered.
 ```bash
 # Login to Harbor
-echo "Harbor12345" | oras login 172.19.59.148:8443 \
+echo "Harbor12345" | oras login 172.19.59.148:8081 \
   -u admin --password-stdin --plain-http
 
 # Navigate to package directory where margo.yaml and /resources present and push package
-oras push 172.19.59.148:8443/library/nginx-helm-app-package:latest \
+oras push 172.19.59.148:8081/library/nginx-helm-app-package:latest \
   --artifact-type "application/vnd.margo.app.v1+json" \
   --plain-http \
   margo.yaml:application/vnd.margo.app.description.v1+yaml \

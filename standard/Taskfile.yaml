@@ -1,0 +1,73 @@
+version: '3'
+
+vars:
+  # Configuration
+  SPEC_URL: "https://raw.githubusercontent.com/margo/specification/pre-draft/system-design/specification/margo-management-interface/workload-management-api-1.0.0.yaml"
+  SPEC_FILE: "wfm-sbi-spec.yaml"
+  OUTPUT_DIR: "./generatedCode/wfm/sbi"
+  # Ensure Go bin is in the path for this task execution
+  GOBIN: { sh: "echo $(go env GOPATH)/bin" }
+
+tasks:
+  default:
+    desc: Run the full generation pipeline
+    cmds:
+      - task: generate
+      - task: verify
+
+  # --- PRE-REQUISITES ---
+
+  check:go:
+    internal: true
+    preconditions:
+      - sh: "command -v go"
+        msg: "Go is not installed. Please install Go before proceeding."
+
+  install:tools:
+    desc: Install oapi-codegen utility
+    deps: [check:go]
+    status:
+      - "test -f {{.GOBIN}}/oapi-codegen"
+    cmds:
+      - go install github.com/deepmap/oapi-codegen/cmd/oapi-codegen@latest
+      - echo "oapi-codegen is ready at {{.GOBIN}}"
+
+  # --- CORE LOGIC ---
+
+  fetch:spec:
+    desc: Download the OpenAPI specification
+    internal: true
+    status:
+      - "test -f {{.SPEC_FILE}}"
+    cmds:
+      - curl -sSL -o {{.SPEC_FILE}} {{.SPEC_URL}}
+      - echo "Specification downloaded to {{.SPEC_FILE}}"
+
+  generate:
+    desc: Generate Go models and client from OpenAPI spec
+    deps: [install:tools, fetch:spec]
+    cmds:
+      # Clean and recreate directory
+      - rm -rf {{.OUTPUT_DIR}}
+      - mkdir -p {{.OUTPUT_DIR}}
+      # Generate Models
+      - "{{.GOBIN}}/oapi-codegen -generate types,skip-prune -package sbi {{.SPEC_FILE}} > {{.OUTPUT_DIR}}/models.go"
+      # Generate Client
+      - "{{.GOBIN}}/oapi-codegen -generate client -package sbi {{.SPEC_FILE}} > {{.OUTPUT_DIR}}/client.go"
+      - echo "Code generation completed in {{.OUTPUT_DIR}}"
+
+  verify:
+    desc: Verify that the generated code builds successfully
+    dir: "{{.OUTPUT_DIR}}"
+    cmds:
+      - go build .
+      - echo "Verification successful- Generated code builds correctly."
+
+  # --- CLEANUP ---
+
+  clean:
+    desc: Remove generated code and downloaded spec
+    cmds:
+      - rm -rf ./generatedCode
+      - rm -f {{.SPEC_FILE}}
+      - echo "Cleanup complete."

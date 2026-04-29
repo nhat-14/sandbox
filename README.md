@@ -5,6 +5,7 @@
 - [Quick Start Guide](#quick-start-guide)
   - [Development Toolset](#development-toolset)
 - [Specification Mapping](#specification-mapping)
+- [Operations Simplification RFC](#operations-simplification-rfc)
 - [Structure of the Repository](#structure-of-the-repository)
 - [3rd Party Components](#3rd-party-components)
 - [Design and Mapping to Margo Architecture](#design-and-mapping-to-margo-architecture)
@@ -42,11 +43,24 @@ This section allows you to set up the 'Sandbox' environment for experimenting wi
 
 Here is [Setup Guide](./docs/setup-guide.md) to get you started quickly.
 
+> **Note**: For local sandbox evaluation, **Docker Compose** is configured as the primary runtime via the `Taskfile.yaml` ecosystem. Legacy host-level service management and Kubernetes (K3s) installations are retained as optionally supported verification paths but are not mandatory for core contribution.
+
 #### Development Toolset
 - [Development Toolset](./docs/dev-toolsets.md)
 
 #### Specification Mapping
 - [Specification to Code Mapping](./docs/spec-to-code-mapping.md)
+
+#### Operations Simplification RFC
+- [Taskfile-Centered Operations Simplification RFC](./docs/rfc-taskfile-operations-simplification.md)
+- [Taskfile Migration Implementation Checklist](./docs/taskfile-implementation-checklist.md)
+- [Phase 0 Operational Inventory and Parity Matrix](./docs/phase0-operational-inventory-and-parity.md)
+- [Phase 2 Script Parity Validation](./docs/phase2-script-parity-validation.md)
+- [Phase 3 Thin Wrapper Refactor](./docs/phase3-thin-wrapper-refactor.md)
+- [Local-First Validation Workflow](./docs/local-first-validation-workflow.md)
+- [Full Option Parity Campaign Status](./docs/parity-campaign-full-option-status.md)
+- [Live Parity Findings](./docs/parity-live-findings.md)
+- [Live Probe Report](./docs/parity-live-probe-report.md)
 
 ---
 
@@ -62,7 +76,7 @@ The repository is divided into three main parts. You can find more details here 
 ### 3rd Party Components
 | Component Type | Component Name | Version |
 |---|---|---|
-| Container Registry | Harbor | v2.13.2 |
+| Container Registry | OCI Registry (ZOT Registry) | v.... |
 | Container Runtime | containerd | v1.7.27-1 |
 | OCI Client | ORAS | 1.1.0 |
 | Database | Redis | 7.0.15 |
@@ -108,12 +122,11 @@ This includes the following elements -
 - As mentioned in Margo architecture and overlay architecture WFM connects through Margo envisioned communication mechanisms
 
 #### Repositories and Registry
-- Harbor provide application registry and images/helm-charts repository functionalities.
-- Application supplier's packages , images/helm-charts are stored in Harbor.
-  and docker images/helm artifacts related to these applications are stored in Harbor registry.
-- Application packages are pulled/pushed/deleted from Harbor repository.
++ Zot is OCI-compliant registry, that provides application registry and images/helm-charts repository functionalities.
++ Application supplier's packages, images/helm-charts are stored in the OCI registry.
+- Application packages are pulled/pushed/deleted from repository.
 - WFM stores application packages in its database and are used during LCM (Life Cycle Management) operation.
-- The Workload Fleet Management Client pulls docker images/helm artifacts from Harbor whenever workloads are getting deployed corresponding to the application packages during instance deployment.
+- The Workload Fleet Management Client pulls docker images/helm artifacts from registry whenever workloads are getting deployed corresponding to the application packages during instance deployment.
 
 #### Telemetry and Monitoring
 - Sandbox deploys OpenTelemetry Collector at WFM client for instrumentation as per Margo observability specification.

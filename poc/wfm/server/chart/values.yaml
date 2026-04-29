@@ -1,0 +1,29 @@
+redis:
+  image: redis:7.0.15-alpine
+  imagePullPolicy: IfNotPresent
+  port: 6379
+  persistence:
+    size: 256Mi
+
+registry:
+  image: registry:2
+  imagePullPolicy: IfNotPresent
+  port: 5443
+  persistence:
+    size: 1Gi
+
+symphonyApi:
+  image: ghcr.io/margo/symphony-api:latest
+  imagePullPolicy: IfNotPresent
+  logLevel: "debug"
+  configName: "symphony-api-margo.json"
+  port: 8082
+
+secrets:
+  create: true # Added this so the secret template actually renders
+  registryCA: ""
+  registryCert: ""
+  registryKey: ""
+  symphonyCA: ""
+  symphonyCert: ""
+  symphonyKey: ""

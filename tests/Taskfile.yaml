@@ -1,0 +1,67 @@
+version: "3"
+
+# --- GLOBAL CONFIGURATION ---
+# These variables flow DOWN into all included Taskfiles.
+vars:
+  GO_VERSION: "1.24.7"
+  K3S_VERSION: "v1.31.4+k3s1"
+  DOCKER_VERSION: "29.1.2"
+
+  # Centralized Registry Config
+  REGISTRY_HOST: "{{.EXPOSED_OCI_HOST | default \"localhost\"}}"
+  REGISTRY_PORT: "{{.REGISTRY_PORT | default \"5000\"}}"
+  REGISTRY_ADDR: "{{.REGISTRY_HOST}}:{{.REGISTRY_PORT}}"
+
+  # Shared Sandbox Paths
+  PROJECT_ROOT: { sh: git rev-parse --show-toplevel 2>/dev/null || pwd }
+  LOCAL_DIR: "{{.PROJECT_ROOT}}/.local"
+  BIN_DIR: "{{.LOCAL_DIR}}/bin"
+
+# --- ENVIRONMENT ---
+env:
+  # This ensures that tools installed by 'tools' or 'standard' are used by 'agent' and 'wfm'
+  PATH: "{{.BIN_DIR}}:{{.PATH}}"
+
+# --- MODULE INCLUSION ---
+includes:
+  wfm:
+    taskfile: Taskfile.yaml
+    dir: ../poc/wfm
+  app-supplier:
+    taskfile: Taskfile.yaml
+    dir: ../poc/app-supplier
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list
+
+  e2e:docker-app:
+    desc: "hey!"
+    cmds:
+      - task: app-supplier:push-nextcloud
+        vars:
+          REGISTRY_HOST: "{{.REGISTRY_HOST}}"
+          REGISTRY_PORT: "{{.REGISTRY_PORT}}"
+      - task: wfm:upload-nextcloud
+        vars:
+          WFM_IP: "{{.WFM_IP}}"
+          WFM_PORT: "{{.WFM_PORT}}"
+        # the above task should have generated NEW_GENERATED_PACKAGE_ID
+      - task: wfm:get-onboarded-docker-device
+        vars:
+          WFM_IP: "{{.WFM_IP}}"
+          WFM_PORT: "{{.WFM_PORT}}"
+        # the above task should have generated NEW_GENERATED_DEVICE_ID
+      - task: wfm:provision-nextcloud
+        vars:
+          WFM_IP: "{{.WFM_IP}}"
+          WFM_PORT: "{{.WFM_PORT}}"
+          DEVICE_ID: "{{.NEW_GENERATED_DEVICE_ID}}"
+          PACKAGE_ID: "{{.NEW_GENERATED_PACKAGE_ID}}"
+      - task: wfm:verify-nextcloud
+        vars:
+          WFM_IP: "{{.WFM_IP}}"
+          WFM_PORT: "{{.WFM_PORT}}"
+          INSTANCE_ID: "{{.NEW_GENERATED_INSTANCE_ID}}"

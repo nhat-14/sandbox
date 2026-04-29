@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    # Matching the script's NodePorts
+    ports:
+      - "30900:9090" # UI
+      - "30909:9090" # Remote Write
+    volumes:
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yaml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-remote-write-receiver'
+      - '--enable-feature=remote-write-receiver'
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "global: {scrape_interval: 15s}" > /etc/prometheus/prometheus.yaml
+        echo "scrape_configs: [{job_name: 'prometheus', static_configs: [{targets: ['localhost:9090']}]}]" >> /etc/prometheus/prometheus.yaml
+        /bin/prometheus "$$@"
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.53
+    container_name: jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "32500:16686" # UI (Matches Script)
+      - "30417:4317"   # OTLP gRPC (Matches Script NodePort)
+      - "30418:4318"   # OTLP HTTP (Matches Script NodePort)
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:2.9.10
+    container_name: loki
+    ports:
+      - "32100:3100" # Internal port is usually 3100
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/data
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.3.0
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      # Optional: Auto-link Prometheus
+      - GF_PROVISIONING_DATASOURCES_PATH=/etc/grafana/provisioning/datasources
+    ports:
+      - "32000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:

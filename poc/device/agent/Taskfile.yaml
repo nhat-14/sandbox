@@ -1,0 +1,277 @@
+version: "3"
+
+vars:
+  # --- System Paths ---
+  PROJECT_ROOT: { sh: git rev-parse --show-toplevel 2>/dev/null || pwd }
+  AGENT_SRC: "."
+
+  # Sandbox State (namespaced under .local)
+  LOCAL_DIR: ".local"
+  BIN_DIR: "{{.LOCAL_DIR}}/bin"
+  CONFIG_DIR: "{{.LOCAL_DIR}}/config"
+  CERT_DIR: "{{.LOCAL_DIR}}/certificates"
+  DATA_DIR: "{{.LOCAL_DIR}}/data"
+
+  # --- Build Metadata ---
+  COMMIT: { sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown" }
+  VERSION: { sh: git describe --tags --always --dirty 2>/dev/null || echo "dev" }
+  TAG: "{{.TAG | default .VERSION}}"
+
+  # Image References
+  IMAGE_NAME: "ghcr.io/margo/workload-fleet-management-client"
+  AGENT_IMAGE_REF: "{{.IMAGE_NAME}}:{{.TAG}}"
+
+  # --- Runtime Configuration ---
+  WFM_HOST: "{{.WFM_HOST | default \"127.0.0.1\"}}"
+  WFM_PORT: "{{.WFM_PORT | default 8082}}"
+  WFM_API_PREFIX: "v1alpha2/margo"
+
+env:
+  PATH: "{{.BIN_DIR}}:{{.PATH}}"
+
+tasks:
+  default:
+    desc: "Show available tasks"
+    cmds:
+      - task --list
+
+  init:
+    internal: true
+    desc: "Prepare the local workspace sandbox"
+    cmds:
+      - mkdir -p {{.BIN_DIR}} {{.CONFIG_DIR}} {{.CERT_DIR}} {{.DATA_DIR}}
+    status:
+      - test -d {{.BIN_DIR}}
+
+  build:
+    desc: "Builds the binary for the device agent into the sandbox"
+    deps: [ init ]
+    cmds:
+      - |
+        go build -trimpath \
+          -o {{.BIN_DIR}}/device-agent \
+          -ldflags "-X main.build={{.VERSION}} -X main.commit={{.COMMIT}}" \
+          {{.AGENT_SRC}}
+      - echo "✅ Binary built at {{.BIN_DIR}}/device-agent"
+
+  build-image:
+    desc: "Builds the binary and image for the device agent"
+    deps: [ build ] # Ensure the binary exists before building the image
+    cmds:
+      - echo "🏗️ Building Docker image {{.IMAGE_NAME}}:{{.TAG}}..."
+      - |
+        docker build \
+          --network=host \
+          -f {{.AGENT_SRC}}/Dockerfile \
+          -t {{.IMAGE_NAME}}:{{.TAG}} \
+          --build-context bin_dir={{.BIN_DIR}} \
+          --build-context config_dir={{.CONFIG_DIR}} \
+          {{.PROJECT_ROOT}}
+      - echo "✅ Device agent image build complete!"
+
+  test:
+    desc: "Run full repository tests"
+    cmds:
+      - go test -count=1 {{.PROJECT_ROOT}}/...
+
+  up:
+    desc: "Start device agent"
+    deps:
+      - task: gen-config
+        vars: { TARGET: "DOCKER" }
+      - task: build-image
+    cmds:
+      # Generate device certificates, if missing
+      - CONFIG_DIR={{.CONFIG_DIR}} CERT_DIR={{.CERT_DIR}} docker compose
+        --profile init run --rm init-certs
+      # Start agent
+      - CONFIG_DIR={{.CONFIG_DIR}} CERT_DIR={{.CERT_DIR}}
+        AGENT_IMAGE_REF={{.AGENT_IMAGE_REF}} docker compose up -d device-agent
+      - echo "✅ Device agent started"
+
+  down:
+    desc: "Stop device agent"
+    cmds:
+      - CONFIG_DIR={{.CONFIG_DIR}} CERT_DIR={{.CERT_DIR}}
+        AGENT_IMAGE_REF={{.AGENT_IMAGE_REF}} docker compose down
+        --remove-orphans || true
+
+  clean:
+    desc: "Remove agent and all data"
+    prompt: "This will delete all certificates and data. Continue?"
+    cmds:
+      - task: down
+      - docker volume rm margo-agent-data || true
+      - rm -rf {{.BIN_DIR}} {{.CONFIG_DIR}} {{.CERT_DIR}} {{.DATA_DIR}}
+      - rm -rf {{.LOCAL_DIR}}
+      - echo "✨ Workspace cleaned."
+
+  start-helm:
+    desc: "Starts device agent via Helm"
+    dir: "{{.AGENT_SRC}}"
+    deps:
+      - task: gen-config
+        vars: { TARGET: "KUBERNETES" }
+      - task: generate-cert
+      - task: build-image
+    cmds:
+      - |
+        helm install workload-fleet-management-client ./chart \
+        --set image.repository={{.IMAGE_NAME}} \
+        --set image.tag={{.TAG}}
+
+  stop-helm:
+    desc: "Stops device agent helm chart"
+    cmds:
+      - helm uninstall workload-fleet-management-client || true
+
+  status:
+    desc: "Show device agent status"
+    cmds:
+      - |
+        if docker ps --format '{{.Names}}' | grep -q "workload-fleet-management-client"; then
+          echo "✅ Docker agent is running"
+          docker ps --filter name=workload-fleet-management-client --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+        else
+          echo "❌ Docker agent is not running"
+        fi
+      - |
+        if command -v kubectl &> /dev/null; then
+          if kubectl get pods -l app=workload-fleet-management-client 2>/dev/null | grep -q Running; then
+            echo "✅ K3s agent is running"
+            kubectl get pods -l app=workload-fleet-management-client
+          else
+            echo "❌ K3s agent is not running"
+          fi
+        fi
+
+  gen-config:
+    desc: "Generates the agent configuration files inside the sandbox"
+    vars:
+      TARGET: "{{ .TARGET | default \"DOCKER\" }}"
+    deps: [ init ]
+    cmds:
+      - |
+        cat <<EOF > {{.CONFIG_DIR}}/config.yaml
+        logging:
+          level: DEBUG
+
+        deviceRootIdentity:
+          identityType: "PKI"
+          attestation:
+            pki:
+              pubCertPath: "/app/certs/device-public.crt"
+
+        wfm:
+          sbiUrl: https://{{.WFM_HOST}}:{{.WFM_PORT}}/{{.WFM_API_PREFIX}}
+          clientPlugins:
+            requestSigner:
+              enabled: true
+              hashAlgo: "sha256"
+              signatureAlgo: "rsa"
+              signatureFormat: "structured"
+              keyRef:
+                path: "/app/certs/device-private.key"
+
+            authHelper:
+              enabled: false
+
+            tlsHelper:
+              enabled: true
+              caKeyRef:
+                path: "/app/certs/wfm-ca.crt"
+
+        stateSeeking:
+          interval: 15
+
+        runtimes:
+        {{- if eq .TARGET "KUBERNETES" }}
+          - type: KUBERNETES
+            kubernetes:
+              kubeconfigPath: /root/.kube/config
+        {{- else }}
+          - type: DOCKER
+            docker:
+              url: unix:///var/run/docker.sock
+        {{- end }}
+
+        capabilities:
+          readFromFile: /app/config/capabilities.json
+        EOF
+
+      - |
+        cat <<EOF > {{.CONFIG_DIR}}/capabilities.json
+        {{- if eq .TARGET "KUBERNETES" }}
+        {
+          "apiVersion": "device.margo/v1",
+          "kind": "DeviceCapability",
+          "properties": {
+            "id": "cluster-device-id-from-manufacturer",
+            "vendor": "Northstar Industrial Applications",
+            "modelNumber": "332ANZE1-N1",
+            "serialNumber": "PF45343-AA",
+            "roles": ["standalone cluster", "cluster lead"],
+            "resources": {
+              "memory": 64,
+              "storage": 2000,
+              "cpus": [{
+              "architecture": "Intel x64",
+              "cores": 24,
+              "frequency": 6.2
+              }]
+            },
+            "peripherals": [{
+              "name": "NVIDIA GeForce RTX 4070 Ti SUPER OC Edition Graphics Card",
+              "type": "GPU",
+              "modelNumber": "TUF-RTX4070TIS-O16G",
+              "properties": {
+                "manufacturer": "NVIDIA",
+                "series": "NVIDIA GeForce RTX 40 Series",
+                "gpu": "GeForce RTX 4070 Ti SUPER",
+                "ram": "16 GB",
+                "clockSpeed": "2640 MHz"
+              }
+            }],
+            "interfaces": [{
+              "name": "RTL8125 NIC 2.5G Gigabit LAN Network Card",
+              "type": "Ethernet",
+              "modelNumber": "RTL8125",
+              "properties": {
+                "maxSpeed": "2.5 Gbps"
+              }
+            },
+            {
+              "name": "WiFi 6E Intel AX411NGW M.2 Cnvio2",
+              "type":  "Wi-Fi",
+              "modelNumber": "AX411NGW",
+              "properties": {
+                "bands": ["2.4 GHz", "5 GHz", "6GHz"],
+                "maxSpeed": "2.4 Gbps"
+              }
+            }]
+          }
+        }
+        {{- else }}
+        {
+          "apiVersion": "device.margo.org/v1alpha1",
+          "kind": "DeviceCapabilitiesManifest",
+          "properties": {
+            "id": "docker-device-id-from-manufacturer",
+            "vendor": "Northstar Industrial Applications",
+            "modelNumber": "332ANZE1-N1",
+            "serialNumber": "PF45343-AA",
+            "roles": ["Standalone Device"],
+            "resources": {
+              "cpu": {
+                "architecture": "amd64",
+                "cores": 24
+              },
+              "memory": "64 Gi",
+              "storage": "2000 Gi",
+              "peripherals": [],
+              "interfaces": []
+            }
+          }
+        }
+        {{- end }}
+        EOF

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: workload-fleet-management-server
+description: Helm chart for Margo Workload Fleet management Server
+version: 0.1.0
+appVersion: "latest"

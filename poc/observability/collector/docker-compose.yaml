@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # 1. The Init Service: Generates config files and then exits
+  config-init:
+    image: alpine:latest
+    container_name: config-init
+    volumes:
+      - shared-configs:/tmp/generated-configs
+    environment:
+      - WFM_HOST=${WFM_HOST:-127.0.0.1}
+      - HOST_IP=${HOST_IP:-127.0.0.1}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        # Generate Promtail Config
+        cat <<EOF > /tmp/generated-configs/promtail-config.yaml
+        server:
+          http_listen_port: 9080
+        positions:
+          filename: /tmp/positions.yaml
+        clients:
+          - url: http://$WFM_HOST:32100/loki/api/v1/push
+        scrape_configs:
+          - job_name: docker-logs
+            static_configs:
+              - targets: [localhost]
+                labels:
+                  job: dockerlogs
+                  __path__: /var/lib/docker/containers/*/*.log
+        EOF
+
+        # Generate OTel Collector Config
+        cat <<EOF > /tmp/generated-configs/otel-config.yaml
+        receivers:
+          otlp:
+            protocols:
+              http: { endpoint: "0.0.0.0:4318" }
+              grpc: { endpoint: "0.0.0.0:4317" }
+          hostmetrics:
+            collection_interval: 30s
+            scrapers: { cpu: {}, memory: {}, disk: {}, filesystem: {}, load: {}, network: {} }
+          docker_stats:
+            endpoint: unix:///var/run/docker.sock
+            collection_interval: 10s
+        exporters:
+          otlp/jaeger:
+            endpoint: "$WFM_HOST:30417"
+            tls: { insecure: true }
+          prometheusremotewrite:
+            endpoint: "http://$WFM_HOST:30909/api/v1/write"
+            tls: { insecure: true }
+            resource_to_telemetry_conversion: { enabled: true }
+        processors:
+          batch: { timeout: 10s }
+          resource:
+            attributes:
+              - { key: device.type, value: docker, action: insert }
+              - { key: device.ip, value: "$HOST_IP", action: insert }
+        service:
+          pipelines:
+            traces:
+              receivers: [otlp]
+              processors: [batch, resource]
+              exporters: [otlp/jaeger]
+            metrics:
+              receivers: [otlp, hostmetrics, docker_stats]
+              processors: [batch, resource]
+              exporters: [prometheusremotewrite]
+        EOF
+        echo "Configs generated successfully."
+
+  # 2. Promtail
+  promtail:
+    image: grafana/promtail:2.9.10
+    container_name: promtail
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - shared-configs:/etc/promtail/  # Mount the shared volume
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
+
+  # 3. OTel Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.140.0
+    container_name: otel-collector
+    network_mode: host
+    restart: unless-stopped
+    user: "0:0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - shared-configs:/etc/otelcol-contrib/  # Mount the shared volume
+    command: ["--config=/etc/otelcol-contrib/otel-config.yaml"]
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
+
+volumes:
+  shared-configs: # This volume holds the dynamic files
