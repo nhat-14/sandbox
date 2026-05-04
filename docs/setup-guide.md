@@ -91,6 +91,38 @@ On each VM, you need to configure environment variables (settings that tell the 
 
 🔴 **Important:** Complete this step on all three VMs before proceeding.
 
+### Certificate Management for Multi-Machine Setups
+
+**Important:** If your WFM server, Registry, and Device VMs are on different machines, you must manually copy certificates between them.
+
+#### Required Certificate Copies:
+
+**From Registry VM to Device VMs:**
+```bash
+# On your local machine or jump host, copy registry CA certificate
+scp username@REGISTRY_VM_IP:~/poc/app-registry/.local/certificates/ca-crt.pem /tmp/registry-ca.crt
+
+# Then copy to each device VM
+scp /tmp/registry-ca.crt username@DEVICE_VM_IP:~/poc/device/agent/.local/certificates/registry-ca-crt.pem
+```
+
+**From WFM VM to Device VMs:**
+```bash
+# Copy WFM CA certificate
+scp username@WFM_VM_IP:~/symphony/api/certificates/ca-cert.pem /tmp/wfm-ca.crt
+
+# Copy to each device VM
+scp /tmp/wfm-ca.crt username@DEVICE_VM_IP:~/poc/device/agent/.local/certificates/wfm-ca.crt
+```
+
+**Replace:**
+- `username` with your VM username
+- `REGISTRY_VM_IP` with your Registry VM's IP address
+- `WFM_VM_IP` with your WFM VM's IP address
+- `DEVICE_VM_IP` with your Device VM's IP address
+
+**Note:** For single-machine testing (all components on one VM), certificate copying happens automatically during installation.
+
 ---
 
 ## Step 3: Build Everything
@@ -100,155 +132,206 @@ On each VM, you need to configure environment variables (settings that tell the 
 
 ### On the WFM VM:
 
+#### Using Interactive Menu (Recommended for First-Time Setup)
+
 1. **Navigate to the scripts folder**
    ```bash
    cd $HOME/workspace/sandbox/scripts
    ```
 
-2. **Install Basic Tools**
+2. **Run the WFM setup script**
    ```bash
-    sudo -E bash wfm.sh
+   sudo -E bash wfm.sh
    ```
-   - A menu will appear
-   - Type `1` and press Enter
-   - Choose: `Option 1: PreRequisites Setup`
 
-   This installs everything basic prerequisites like Docker, K3s, Helm, and other tools. This may take 10-15 minutes.
+3. **Follow the interactive menu:**
+   - **Step 1:** Type `1` and press Enter → `PreRequisites Setup`
+     - Installs Docker, K3s, Helm, and other tools
+     - Builds WFM images
+     - Sets up Registry
+     - Takes 10-15 minutes
 
+   - **Step 2:** Type `3` and press Enter → `Symphony Start`
+     - Starts WFM server and Redis
+     - Generates TLS certificates automatically
 
-3. **Start the Workload Fleet Manager**
+   - **Step 3:** Type `5` and press Enter → `ObservabilityStack Start`
+     - Starts monitoring tools (Grafana, Prometheus, Jaeger, Loki)
+
+4. **Verify WFM is running**
    ```bash
-    sudo -E bash wfm.sh
-   ```
-   - Type `3` and press Enter
-   - Choose: `Option 3: Symphony Start`
-
-   This starts the Workload Fleet Manager service stack(symphony and redis).
-> Note: Docker image for Workload Fleet Manager has been already built and pushed using CI pipeline to Margo GHCR registry from where the below script pull the image and starts WFM.
-
-4. **Add Monitoring Tools**
-   ```bash
-    sudo -E bash wfm.sh
-   ```
-   - Type `5` and press Enter
-   - Choose: `Option 5: ObservabilityStack Start`
-
-   This adds tools to monitor workloads observability.
-
-5. **Verify the Workload Fleet Manager Is Running Correctly**
-   ```bash
-   sudo docker logs -f symphony-api
+   sudo docker logs -f symphony-api-container
    ```
    You should see log messages indicating the service is running. Press `Ctrl+C` to exit.
 
-> Note: Services are configured to auto-start on VM reboot.
-  However, if you encounter issues after reboot, you can manually restart them using the same menu options.
+#### Using CLI Mode (For Automation/Scripts)
+
+Alternatively, you can use CLI commands directly:
+
+```bash
+cd $HOME/workspace/sandbox/scripts
+
+# Install prerequisites and start WFM
+sudo -E bash wfm.sh install
+sudo -E bash wfm.sh start
+sudo -E bash wfm.sh obs-install
+```
+
+**Note:** Services auto-start on VM reboot. If issues occur after reboot, manually restart using the menu or CLI commands.
 
 
 ### On Each Device VM:
+
+#### Using Interactive Menu (Recommended for First-Time Setup)
+
 1. **Navigate to the scripts folder**
    ```bash
    cd $HOME/workspace/sandbox/scripts
    ```
 
-2. **Install Basic Tools**
+2. **Run the device agent setup script**
 
-   Based on the device type, select **k3s** or **docker** while sourcing the environment variables. For example:
+   **For Docker-based device:**
    ```bash
-   sudo -E bash device-agent.sh docker # for docker-compose device
-   sudo -E bash device-agent.sh k3s    # for k3s device
+   sudo -E bash device-agent.sh docker
    ```
-   - Type `1` and press Enter
-   - Choose: `Option 1: Install-prerequisites`
 
-   This may take 10-15 minutes.
-
-4. **Create Security Certificates**
+   **For K3s-based device:**
    ```bash
-    sudo -E bash device-agent.sh docker # for docker-compose device
-    sudo -E bash device-agent.sh k3s    # for k3s device
+   sudo -E bash device-agent.sh k3s
    ```
-   - The certs will be automatically generated.
 
-   These certificates allow secure communication between VMs and are automatically saved in `$HOME/certs` directory.
+3. **Follow the interactive menu:**
+   - **Step 1:** Type `1` and press Enter → `Install-prerequisites`
+     - Installs Docker (for docker device) or K3s (for k3s device)
+     - Installs required tools
+     - Builds agent images
+     - Generates device certificates automatically
+     - Takes 10-15 minutes
+
+**Note:** Certificate generation happens automatically during installation. For multi-machine setups, you must manually copy WFM and Registry certificates as described in Step 2.
+
+#### Using CLI Mode (For Automation/Scripts)
+
+Alternatively, you can use CLI commands directly:
+
+**For Docker device:**
+```bash
+cd $HOME/workspace/sandbox/scripts
+sudo -E bash device-agent.sh docker install
+```
+
+**For K3s device:**
+```bash
+cd $HOME/workspace/sandbox/scripts
+sudo -E bash device-agent.sh k3s install
+```
 
 ---
 
 ## Step 4: Deploy (Connect Everything)
 
-### Copy Security File Between VMs
+### Copy Certificates Between VMs (Multi-Machine Setup Only)
 
-You need to copy a security file from the WFM VM to each Device VM.
+**⚠️ Important:** This step is ONLY required if your WFM, Registry, and Device VMs are on different physical/virtual machines. Skip this if everything is on one machine.
 
-#### Step 1: Preparation on WFM VM
+#### Required Certificates
 
-| Step | Action | Command | Expected Result |
-|------|--------|---------|-----------------|
-| 1 | Find WFM IP address | `hostname -I` | First IP address (e.g., 192.168.1.100) |
-| 2 | Locate certificate | `cd $HOME/symphony/api/certificates`<br>`ls -la wfm-ca.crt` | File: `wfm-ca.crt` |
+Each Device VM needs two certificates:
+1. **WFM CA Certificate** - To trust the WFM server
+2. **Registry CA Certificate** - To pull container images
 
-**Note:** Write down the IP address from Step 1 for use in the copy commands below.
+#### Certificate Locations
 
+**On WFM VM:**
+- WFM CA: `~/symphony/api/certificates/ca-cert.pem`
 
-#### Step 2: Copy Methods
+**On Registry VM (or WFM VM if co-located):**
+- Registry CA: `~/poc/app-registry/.local/certificates/ca-crt.pem`
 
-**Option A - Using SCP**
-🔴 **(Recommended - Run from Device VMs)**
+**On Device VM (destination):**
+- WFM CA should be copied to: `~/poc/device/agent/.local/certificates/wfm-ca.crt`
+- Registry CA should be copied to: `~/poc/device/agent/.local/certificates/registry-ca-crt.pem`
 
+#### Copy Commands
 
+**Run these commands from your Device VM:**
 
-| Target VM | Run From | SCP Command | Example |
-|-----------|----------|-------------|---------|
-| **Docker Device** | Docker Device VM | `scp username@WFM-VM-IP:~/symphony/api/certificates/wfm-ca.crt $HOME/certs/` | `scp azureuser@10.10.10.4:~/symphony/api/certificates/wfm-ca.crt $HOME/certs/` |
-| **K3s Device** | K3s Device VM | `scp username@WFM-VM-IP:~/symphony/api/certificates/wfm-ca.crt $HOME/certs/` | `scp azureuser@10.10.10.4:~/symphony/api/certificates/wfm-ca.crt $HOME/certs/` |
+```bash
+# Create certificate directory
+mkdir -p ~/poc/device/agent/.local/certificates
 
-**Note:** Run with **sudo** if fails.
+# Copy WFM CA certificate
+scp username@WFM_VM_IP:~/symphony/api/certificates/ca-cert.pem \
+    ~/poc/device/agent/.local/certificates/wfm-ca.crt
+
+# Copy Registry CA certificate
+scp username@REGISTRY_VM_IP:~/poc/app-registry/.local/certificates/ca-crt.pem \
+    ~/poc/device/agent/.local/certificates/registry-ca-crt.pem
+```
 
 **Replace:**
-- `username` with your WFM VM username
-- `WFM-VM-IP` with the IP address from Step 1
+- `username` - Your VM username
+- `WFM_VM_IP` - WFM server IP address (e.g., 192.168.1.100)
+- `REGISTRY_VM_IP` - Registry server IP address (may be same as WFM_VM_IP)
 
-**Option B - Manual Copy**
+**Verify certificates were copied:**
+```bash
+ls -la ~/poc/device/agent/.local/certificates/
+# Should show: wfm-ca.crt and registry-ca-crt.pem
+```
 
-| Step | Docker Device VM | K3s Device VM |
-|------|------------------|---------------|
-| 1 | Open `wfm-ca.crt` on WFM VM and copy contents | Open `wfm-ca.crt` on WFM VM and copy contents |
-| 2 | Create file `wfm-ca.crt` in `$HOME/certs/` | Create file `wfm-ca.crt` in `$HOME/certs/` |
-| 3 | Paste contents and save | Paste contents and save |
-
-
-**Note:** The `$HOME/certs` directory was automatically created when you generated the security certificates in Step 3.
+**Troubleshooting:**
+- If `scp` fails with "Permission denied", add `sudo` before the destination path
+- If files don't exist on source VM, ensure you completed Step 3 (Build Everything) on those VMs first
+- You can also use `rsync` or manually copy-paste file contents if `scp` is not available
 
 ### Start Device Services
 > Note: Docker image for Workload Fleet Management client has been already built and pushed using CI pipeline to Margo GHCR registry from where the below script pull the image and starts WFM client.
 
 **On Docker Device VM:**
 
+#### Using Interactive Menu
+
 1. **Navigate to the scripts folder**
    ```bash
    cd $HOME/workspace/sandbox/scripts
    ```
 
-2. **Start the device's Workload Fleet Management Client**
+2. **Start the device agent**
    ```bash
-    sudo -E bash device-agent.sh docker
+   sudo -E bash device-agent.sh docker
    ```
-   - Type `3` and press Enter
-   - Choose: `Option 3: Device-agent-Start(docker-compose-device)`
+   - Type `3` and press Enter → `WFM-Client-Start(docker-compose-device)`
 
 3. **Check device status**
    ```bash
-    sudo -E bash device-agent.sh docker
+   sudo -E bash device-agent.sh docker
    ```
-   - Type `7` and press Enter
-   - Choose: `Option 7: Device-agent-Status`
+   - Type `7` and press Enter → `WFM-Client-Status`
 
 4. **View device logs**
    ```bash
-   # View the logs
    sudo docker logs -f workload-fleet-management-client
    ```
-   You should see log messages indicating the service is running. Press `Ctrl+C` to exit the logs.
+   Press `Ctrl+C` to exit.
+
+#### Using CLI Mode
+
+```bash
+cd $HOME/workspace/sandbox/scripts
+
+# Start agent
+sudo -E bash device-agent.sh docker start-docker
+
+# Check status
+sudo -E bash device-agent.sh docker status
+
+# View logs
+sudo docker logs -f workload-fleet-management-client
+```
+
+**Note:** The agent auto-starts on VM reboot. If issues occur, manually restart using menu option 3 or CLI command.
 
 **On K3s Device VM:**
 

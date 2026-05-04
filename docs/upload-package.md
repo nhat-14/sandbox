@@ -64,3 +64,17 @@ oras push 172.19.59.148:8081/library/nginx-helm-app-package:latest \
   resources/margo.jpg:image/jpeg \
   resources/release-notes.md:text/markdown
 ```
+
+### Upload to WFM
+After pushing the app package to the registry, upload it into the WFM sandbox using Maestro:
+
+```bash
+# From the repo root, run these Taskfile tasks:
+# - build WFM CLI if needed
+# - upload sample packages to WFM
+cd /root/margo/sandbox
+task app-supplier:upload:nextcloud
+task app-supplier:upload:otel
+```
+
+If Maestro is not available in `../wfm/server/.local/bin/maestro`, install or build it first via `task wfm-server:build`.

@@ -99,6 +99,8 @@ includes:
       PROJECT_ROOT: "{{.PROJECT_ROOT}}"
       REGISTRY_HOST: "{{.REGISTRY_HOST}}"
       REGISTRY_PORT: "{{.REGISTRY_PORT}}"
+      WFM_HOST: "{{.WFM_HOST}}"
+      WFM_PORT: "{{.WFM_PORT}}"
 
 tasks:
   default:
@@ -216,7 +218,9 @@ tasks:
     cmds:
       - task: registry:up
       - task: app-supplier:push:nextcloud
+      - task: app-supplier:upload:nextcloud
       - task: app-supplier:push:otel
+      - task: app-supplier:upload:otel
       - task: app-supplier:cleanup
 
   test:e2e:

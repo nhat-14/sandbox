@@ -48,8 +48,8 @@ services:
           -key /certs/ca-key.pem -out /certs/ca-crt.pem \
           -subj "/C=IN/ST=GGN/L=Sector 48/O=Margo/CN=Margo Root CA"
 
-        # Determine if HOST is IP or DNS
-        IS_IP=$$(echo $$HOST | grep -E '^[0-9.]+$$' && echo "true" || echo "false")
+        # Determine if WFM_HOST is IP or DNS
+        IS_IP=$$(echo $$WFM_HOST | grep -E '^[0-9.]+$$' && echo "true" || echo "false")
 
         # Generate Server Certificate with SAN
         cat > /tmp/server.conf <<EOF
@@ -64,7 +64,7 @@ services:
         ST=GGN
         L=Sector 48
         O=Margo
-        CN=$$HOST
+        CN=$$WFM_HOST
 
         [v3_req]
         basicConstraints = CA:FALSE
@@ -73,7 +73,7 @@ services:
         subjectAltName = @alt_names
 
         [alt_names]
-        $$(if [ "$$IS_IP" = "true" ]; then echo "IP.1 = $$HOST"; else echo "DNS.1 = $$HOST"; fi)
+        $$(if [ "$$IS_IP" = "true" ]; then echo "IP.1 = $$WFM_HOST"; else echo "DNS.1 = $$WFM_HOST"; fi)
         DNS.2 = localhost
         IP.2 = 127.0.0.1
         EOF

@@ -3,6 +3,9 @@ version: "3"
 vars:
   REGISTRY: "{{.REGISTRY_HOST | default \"127.0.0.1\"}}:{{.REGISTRY_PORT | default
     \"5000\"}}"
+  WFM_HOST: "{{.WFM_HOST | default \"127.0.0.1\"}}"
+  WFM_PORT: "{{.WFM_PORT | default \"8082\"}}"
+  MAESTRO_CLI_PATH: "{{.MAESTRO_CLI_PATH | default \"../wfm/server/.local/bin/maestro\"}}"
   OCI_ORG: "{{.OCI_ORGANIZATION | default \"margo\"}}"
   # Paths
   SAMPLES_SRC: "samples"
@@ -82,7 +85,43 @@ tasks:
         vars:
           DIR: "{{.SAMPLES_COPY}}/custom-otel-helm-app/margo-package"
           REPO: "custom-otel-helm-app-package"
+  upload:nextcloud:
+    desc: Upload Nextcloud app package to WFM
+    deps: [ push:nextcloud ]
+    cmds:
+      - |
+        PKG_DIR="{{.SAMPLES_COPY}}/nextcloud-compose/margo-package"
+        PKG_FILE="$PKG_DIR/margo.yaml"
+        MAESTRO="{{.MAESTRO_CLI_PATH}}"
+        if [ ! -x "$MAESTRO" ]; then
+          if command -v maestro >/dev/null 2>&1; then
+            MAESTRO="$(command -v maestro)"
+          else
+            echo "Missing maestro CLI. Build WFM server or install Maestro."
+            exit 1
+          fi
+        fi
+        echo "Uploading Nextcloud package to WFM at {{.WFM_HOST}}:{{.WFM_PORT}}"
+        "$MAESTRO" wfm --host "{{.WFM_HOST}}" --port "{{.WFM_PORT}}" apply -f "$PKG_FILE"
 
+  upload:otel:
+    desc: Upload Custom OTEL app package to WFM
+    deps: [ push:otel ]
+    cmds:
+      - |
+        PKG_DIR="{{.SAMPLES_COPY}}/custom-otel-helm-app/margo-package"
+        PKG_FILE="$PKG_DIR/margo.yaml"
+        MAESTRO="{{.MAESTRO_CLI_PATH}}"
+        if [ ! -x "$MAESTRO" ]; then
+          if command -v maestro >/dev/null 2>&1; then
+            MAESTRO="$(command -v maestro)"
+          else
+            echo "Missing maestro CLI. Build WFM server or install Maestro."
+            exit 1
+          fi
+        fi
+        echo "Uploading Custom OTEL package to WFM at {{.WFM_HOST}}:{{.WFM_PORT}}"
+        "$MAESTRO" wfm --host "{{.WFM_HOST}}" --port "{{.WFM_PORT}}" apply -f "$PKG_FILE"
   oras:push:
     internal: true
     preconditions:

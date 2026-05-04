@@ -83,31 +83,7 @@ run_task() {
   )
 }
 
-# ----------------------------
-# Registry Certificate Helper
-# ----------------------------
-copy_registry_certs_to_agent() {
-  local registry_cert_dir="$PROJECT_ROOT/poc/app-registry/.local/certificates"
-  local agent_cert_dir="$PROJECT_ROOT/poc/device/agent/.local/certificates"
 
-
-  if [[ ! -d "$registry_cert_dir" ]]; then
-    echo "[ERROR] Registry certificates not found at: $registry_cert_dir"
-    echo "[INFO] Please copy the registry certificates manually"
-    return 1
-  fi
-
-  mkdir -p "$agent_cert_dir"
-
-  # Copy registry CA certificate
-  if [[ -f "$registry_cert_dir/ca-crt.pem" ]]; then
-    cp "$registry_cert_dir/ca-crt.pem" "$agent_cert_dir/registry-ca-crt.pem"
-    echo "✅ Copied registry CA certificate to agent"
-  else
-    echo "[ERROR] Registry CA certificate not found"
-    return 1
-  fi
-}
 
 # ----------------------------
 # Agent Status
@@ -154,14 +130,12 @@ show_menu() {
       fi
       ;;
     3)
-      copy_registry_certs_to_agent || return 1
       run_task agent:up TARGET=docker
       ;;
     4)
       run_task agent:down
       ;;
     5)
-      copy_registry_certs_to_agent || return 1
       run_task agent:start-helm TARGET=kubernetes
       ;;
     6)
@@ -247,14 +221,12 @@ elif [[ "$1" == "docker" || "$1" == "k3s" ]] && [[ -n "$2" ]]; then
       run_task nuke
       ;;
     start-docker)
-      copy_registry_certs_to_agent || exit 1
       run_task agent:up TARGET=docker
       ;;
     stop-docker)
       run_task agent:down
       ;;
     start-k3s)
-      copy_registry_certs_to_agent || exit 1
       run_task agent:start-helm TARGET=kubernetes
       ;;
     stop-k3s)

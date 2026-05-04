@@ -1,0 +1,443 @@
+name: sandbox-sanity-test-v2
+
+on:
+  push:
+    branches:
+      - development
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  pull_request:
+    branches:
+      - development
+  workflow_dispatch:
+    inputs:
+      WFM_SYMPHONY_BRANCH_override:
+        description: "Override WFM_SYMPHONY_BRANCH"
+        required: false
+        default: "development"
+      sandbox_repo_branch_override:
+        description: "Override SANDBOX_REPO_BRANCH"
+        required: false
+        default: "development"
+
+jobs:
+  sandbox-e2e-functional-test-job:
+    runs-on: ubuntu-24.04
+    env:
+      CI: "true"
+      # Branches
+      WFM_SYMPHONY_BRANCH: ${{ github.event.inputs.WFM_SYMPHONY_BRANCH_override || 'development' }}
+      SANDBOX_REPO_BRANCH: ${{ github.event.inputs.sandbox_repo_branch_override || 'development' }}
+
+      # Network Configuration
+      REGISTRY_HOST: "registry.machine"
+      REGISTRY_PORT: "5000"
+      WFM_HOST: "symphony.machine"
+      WFM_PORT: "8082"
+
+      # Image Tags (CI-specific overrides)
+      TAG: "ci-test"
+      IMAGE_NAME: "symphony-api"
+      AGENT_IMAGE_NAME: "workload-fleet-management-client"
+
+      # Package Names
+      APP_PACKAGE_NAME_K3S: "custom-otel-helm-app-package"
+      APP_PACKAGE_NAME_DOCKER: "nextcloud-compose-app-package"
+
+      # Registry Auth
+      REGISTRY_USER: "admin"
+      REGISTRY_PASS: "${{ secrets.REGISTRY_PASSWORD }}"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect Runner IP
+        run: |
+          RUNNER_IP=$(hostname -I | awk '{print $1}')
+          echo "RUNNER_IP=$RUNNER_IP" >> $GITHUB_ENV
+          echo "✅ Runner IP: $RUNNER_IP"
+
+      - name: Configure /etc/hosts
+        run: |
+          echo "🔧 Updating /etc/hosts"
+          echo "${RUNNER_IP} registry.machine" | sudo tee -a /etc/hosts
+          echo "${RUNNER_IP} symphony.machine" | sudo tee -a /etc/hosts
+          echo "✅ /etc/hosts updated"
+
+      - name: Generate Environment Files
+        run: |
+          # Generate wfm.env
+          cat > scripts/wfm.env <<EOF
+          CI=true
+          REGISTRY_HOST=registry.machine
+          REGISTRY_PORT=5000
+          WFM_HOST=symphony.machine
+          WFM_PORT=8082
+          WFM_SYMPHONY_BRANCH=${WFM_SYMPHONY_BRANCH}
+          SANDBOX_REPO_BRANCH=${SANDBOX_REPO_BRANCH}
+          TAG=${TAG}
+          IMAGE_NAME=${IMAGE_NAME}
+          EOF
+
+          # Generate device-agent.env
+          cat > scripts/device-agent.env <<EOF
+          CI=true
+          REGISTRY_HOST=registry.machine
+          REGISTRY_PORT=5000
+          WFM_HOST=symphony.machine
+          WFM_PORT=8082
+          SANDBOX_REPO_BRANCH=${SANDBOX_REPO_BRANCH}
+          TAG=${TAG}
+          IMAGE_NAME=${AGENT_IMAGE_NAME}
+          EOF
+
+          echo "✅ Environment files generated"
+
+      - name: Install WFM Prerequisites and Start WFM
+        working-directory: scripts
+        timeout-minutes: 15
+        run: |
+          echo "📦 Installing WFM components..."
+          sudo -E bash ./wfm.sh install
+
+          echo "🚀 Starting WFM..."
+          sudo -E bash ./wfm.sh start
+
+          echo "⏳ Waiting for WFM API to be ready..."
+          for i in {1..60}; do
+            if curl -k -s https://symphony.machine:8082/health >/dev/null 2>&1; then
+              echo "✅ WFM API is ready"
+              break
+            fi
+            echo "Waiting for WFM API... ($i/60)"
+            sleep 2
+          done
+
+      - name: Install K3s Device Prerequisites
+        working-directory: scripts
+        timeout-minutes: 10
+        run: |
+          echo "📦 Installing K3s device prerequisites..."
+          sudo -E bash ./device-agent.sh k3s install
+
+      - name: Configure CoreDNS for K3s
+        run: |
+          echo "📡 Configuring CoreDNS with custom DNS entries..."
+
+          for RETRY in {1..3}; do
+            echo "Attempt $RETRY to configure CoreDNS..."
+
+            sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml \
+              kubectl -n kube-system get configmap coredns -o yaml > config.yaml
+
+            awk -v ip="${RUNNER_IP}" '
+            /hosts \/etc\/coredns\/NodeHosts/ {
+              print
+              getline
+              print "        " ip " registry.machine"
+              print "        " ip " symphony.machine"
+              print
+              next
+            }
+            { print }
+            ' config.yaml > config-new.yaml
+
+            if grep -q "registry.machine" config-new.yaml && grep -q "symphony.machine" config-new.yaml; then
+              echo "✅ DNS entries added to ConfigMap"
+
+              sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply -f config-new.yaml
+              sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl rollout restart deployment coredns -n kube-system
+              sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl rollout status deployment/coredns -n kube-system --timeout=60s
+
+              echo "⏳ Waiting for DNS propagation..."
+              sleep 15
+              echo "✅ CoreDNS configured successfully"
+              break
+            else
+              echo "⚠️ DNS entries not found in updated ConfigMap, retrying..."
+              sleep 5
+            fi
+
+            if [ $RETRY -eq 3 ]; then
+              echo "❌ Failed to configure CoreDNS after 3 attempts"
+              cat config-new.yaml
+              exit 1
+            fi
+          done
+
+      - name: Copy WFM Certificates to Agent Directory
+        run: |
+          echo "📋 Copying WFM CA certificate for agent..."
+          WFM_CERT_DIR="$HOME/symphony/api/certificates"
+          AGENT_CERT_DIR="$HOME/sandbox/poc/device/agent/.local/certificates"
+
+          mkdir -p "$AGENT_CERT_DIR"
+
+          if [[ -f "$WFM_CERT_DIR/ca-cert.pem" ]]; then
+            cp "$WFM_CERT_DIR/ca-cert.pem" "$AGENT_CERT_DIR/wfm-ca.crt"
+            echo "✅ WFM CA certificate copied"
+          else
+            echo "❌ WFM CA certificate not found"
+            exit 1
+          fi
+
+      - name: Copy Registry Certificates to Agent Directory
+        run: |
+          echo "📋 Copying Registry CA certificate for agent..."
+          REGISTRY_CERT_DIR="$HOME/sandbox/poc/app-registry/.local/certificates"
+          AGENT_CERT_DIR="$HOME/sandbox/poc/device/agent/.local/certificates"
+
+          mkdir -p "$AGENT_CERT_DIR"
+
+          if [[ -f "$REGISTRY_CERT_DIR/ca-crt.pem" ]]; then
+            cp "$REGISTRY_CERT_DIR/ca-crt.pem" "$AGENT_CERT_DIR/registry-ca-crt.pem"
+            echo "✅ Registry CA certificate copied"
+          else
+            echo "❌ Registry CA certificate not found"
+            exit 1
+          fi
+
+      - name: Start K3s Device Agent
+        working-directory: scripts
+        timeout-minutes: 5
+        run: |
+          echo "🚀 Starting K3s device agent..."
+          sudo -E bash ./device-agent.sh k3s start-k3s
+
+          echo "⏳ Waiting for agent pod to be ready..."
+          for i in {1..30}; do
+            if sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get pods | grep workload-fleet-management-client | grep -q "Running"; then
+              echo "✅ K3s agent pod is running"
+              sleep 3
+              break
+            fi
+            echo "Waiting for pod... ($i/30)"
+            sleep 2
+          done
+
+      - name: Verify DNS Resolution in K3s Agent Pod
+        run: |
+          echo "🔍 Verifying DNS resolution in agent pod..."
+          POD_NAME=$(sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get pods \
+            -o name | grep workload-fleet-management-client | head -1 | cut -d'/' -f2)
+
+          for i in {1..30}; do
+            if sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl exec "$POD_NAME" -- \
+              nslookup registry.machine >/dev/null 2>&1; then
+              RESOLVED_IP=$(sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl exec "$POD_NAME" -- \
+                nslookup registry.machine 2>/dev/null | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | head -1)
+              echo "✅ DNS working - registry.machine resolves to: $RESOLVED_IP"
+
+              if [ "$RESOLVED_IP" = "${RUNNER_IP}" ]; then
+                echo "✅ DNS resolves to correct IP"
+                break
+              fi
+            fi
+            echo "Waiting for DNS propagation... ($i/30)"
+            sleep 2
+          done
+
+      - name: Install Docker Device Prerequisites
+        working-directory: scripts
+        timeout-minutes: 10
+        run: |
+          echo "📦 Installing Docker device prerequisites..."
+          sudo -E bash ./device-agent.sh docker install
+
+      - name: Start Docker Device Agent
+        working-directory: scripts
+        timeout-minutes: 5
+        run: |
+          echo "🚀 Starting Docker device agent..."
+          sudo -E bash ./device-agent.sh docker start-docker
+
+          echo "⏳ Waiting for agent container to be ready..."
+          for i in {1..30}; do
+            if docker ps --format "{{.Names}}" | grep -q "^workload-fleet-management-client$"; then
+              echo "✅ Docker agent container is running"
+              docker ps --filter "name=workload-fleet-management-client" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+              sleep 5
+              break
+            fi
+            echo "Waiting for container... ($i/30)"
+            sleep 2
+          done
+
+      - name: Upload Application Packages
+        working-directory: scripts
+        timeout-minutes: 10
+        run: |
+          echo "📤 Uploading application packages..."
+
+          # Upload K3s package
+          echo "Uploading ${APP_PACKAGE_NAME_K3S}..."
+          sudo -E bash ./wfm-cli.sh upload-app-non-interactive "${APP_PACKAGE_NAME_K3S}"
+
+          # Upload Docker package
+          echo "Uploading ${APP_PACKAGE_NAME_DOCKER}..."
+          sudo -E bash ./wfm-cli.sh upload-app-non-interactive "${APP_PACKAGE_NAME_DOCKER}"
+
+          # Wait for packages to be onboarded
+          echo "⏳ Waiting for packages to be onboarded..."
+          for i in {1..20}; do
+            K3S_STATUS=$(sudo -E bash ./wfm-cli.sh list-packages 2>/dev/null | grep "${APP_PACKAGE_NAME_K3S}" | grep -o "ONBOARDED" || echo "")
+            DOCKER_STATUS=$(sudo -E bash ./wfm-cli.sh list-packages 2>/dev/null | grep "${APP_PACKAGE_NAME_DOCKER}" | grep -o "ONBOARDED" || echo "")
+
+            if [ "$K3S_STATUS" = "ONBOARDED" ] && [ "$DOCKER_STATUS" = "ONBOARDED" ]; then
+              echo "✅ Both packages onboarded"
+              break
+            fi
+            echo "Waiting for packages... ($i/20)"
+            sleep 3
+          done
+
+      - name: Deploy to K3s Device
+        working-directory: scripts
+        timeout-minutes: 10
+        run: |
+          echo "📋 Deploying to K3s device..."
+
+          PACKAGE_ID=$(sudo -E bash ./wfm-cli.sh get-package-id-by-name "${APP_PACKAGE_NAME_K3S}" | tail -n1)
+          DEVICE_ID=$(sudo -E bash ./wfm-cli.sh get-device-id-by-role "Standalone Cluster" | tail -n1)
+
+          if [ -z "$PACKAGE_ID" ] || [ "$PACKAGE_ID" = "null" ] || [ -z "$DEVICE_ID" ] || [ "$DEVICE_ID" = "null" ]; then
+            echo "❌ Invalid IDs for K3s deployment"
+            exit 1
+          fi
+
+          DEPLOY_OUTPUT=$(sudo -E bash ./wfm-cli.sh deploy-non-interactive "$PACKAGE_ID" "$DEVICE_ID")
+          DEPLOYMENT_ID=$(echo "$DEPLOY_OUTPUT" | grep -oP 'deploymentId \K[a-f0-9-]+' | head -1)
+          echo "📦 K3s Deployment ID: $DEPLOYMENT_ID"
+
+          # Monitor deployment
+          for ATTEMPT in {1..60}; do
+            DEPLOYMENT_STATUS=$(sudo -E bash ./wfm-cli.sh list-deployments 2>/dev/null | grep "${DEPLOYMENT_ID:0:10}" | awk '{print $NF}' || echo "")
+
+            if [ "$DEPLOYMENT_STATUS" = "INSTALLED" ]; then
+              echo "✅ K3s deployment completed!"
+              break
+            elif [ "$DEPLOYMENT_STATUS" = "FAILED" ]; then
+              echo "❌ K3s deployment failed"
+              sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl logs deployment/workload-fleet-management-client-deploy --tail=100 || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Deploy to Docker Device
+        working-directory: scripts
+        timeout-minutes: 10
+        run: |
+          echo "📋 Deploying to Docker device..."
+
+          PACKAGE_ID=$(sudo -E bash ./wfm-cli.sh get-package-id-by-name "${APP_PACKAGE_NAME_DOCKER}" | tail -n1)
+          DEVICE_ID=$(sudo -E bash ./wfm-cli.sh get-device-id-by-role "Standalone Device" | tail -n1)
+
+          if [ -z "$PACKAGE_ID" ] || [ "$PACKAGE_ID" = "null" ] || [ -z "$DEVICE_ID" ] || [ "$DEVICE_ID" = "null" ]; then
+            echo "❌ Invalid IDs for Docker deployment"
+            exit 1
+          fi
+
+          DEPLOY_OUTPUT=$(sudo -E bash ./wfm-cli.sh deploy-non-interactive "$PACKAGE_ID" "$DEVICE_ID")
+          DEPLOYMENT_ID=$(echo "$DEPLOY_OUTPUT" | grep -oP 'deploymentId \K[a-f0-9-]+' | head -1)
+          echo "📦 Docker Deployment ID: $DEPLOYMENT_ID"
+
+          # Monitor deployment
+          for ATTEMPT in {1..60}; do
+            DEPLOYMENT_STATUS=$(sudo -E bash ./wfm-cli.sh list-deployments 2>/dev/null | grep "${DEPLOYMENT_ID:0:10}" | awk '{print $NF}' || echo "")
+
+            if [ "$DEPLOYMENT_STATUS" = "INSTALLED" ]; then
+              echo "✅ Docker deployment completed!"
+              break
+            elif [ "$DEPLOYMENT_STATUS" = "FAILED" ]; then
+              echo "❌ Docker deployment failed"
+              docker logs workload-fleet-management-client --tail=100 || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Final Status Report
+        if: always()
+        working-directory: scripts
+        run: |
+          echo ""
+          echo "========================================="
+          echo "📋 FINAL DEPLOYMENT STATUS"
+          echo "========================================="
+          sudo -E bash ./wfm-cli.sh list-all-non-interactive
+
+          echo ""
+          echo "========================================="
+          echo "📋 WFM LOGS"
+          echo "========================================="
+          docker logs symphony-api-container --tail=100 2>&1 || echo "Could not retrieve WFM logs"
+
+          echo ""
+          echo "========================================="
+          echo "📋 K3S AGENT LOGS"
+          echo "========================================="
+          POD_NAME=$(sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get pods \
+            -o name 2>/dev/null | grep workload-fleet-management-client | head -1 | cut -d'/' -f2 || echo "")
+          if [ -n "$POD_NAME" ]; then
+            sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl logs "pod/$POD_NAME" --tail=100 2>&1 || echo "Could not retrieve K3s logs"
+          fi
+
+          echo ""
+          echo "========================================="
+          echo "📋 DOCKER AGENT LOGS"
+          echo "========================================="
+          docker logs workload-fleet-management-client --tail=100 2>&1 || echo "Could not retrieve Docker logs"
+
+      - name: Cleanup Deployments
+        if: always()
+        working-directory: scripts
+        run: |
+          echo "🗑️ Cleaning up deployments..."
+
+          DEPLOYMENTS=$(sudo -E bash ./wfm-cli.sh list-deployments 2>/dev/null || echo "")
+          if [ -n "$DEPLOYMENTS" ]; then
+            DEPLOYMENT_IDS=$(echo "$DEPLOYMENTS" | grep "INSTALLED" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' || echo "")
+
+            if [ -n "$DEPLOYMENT_IDS" ]; then
+              while IFS= read -r deployment_id; do
+                if [ -n "$deployment_id" ]; then
+                  echo "Deleting deployment: $deployment_id"
+                  sudo -E bash ./wfm-cli.sh delete-instance-non-interactive "$deployment_id" || true
+                fi
+              done <<< "$DEPLOYMENT_IDS"
+
+              # Wait for removal
+              for i in {1..30}; do
+                REMAINING=$(sudo -E bash ./wfm-cli.sh list-deployments 2>/dev/null | \
+                  grep -E "INSTALLED|REMOVING" | grep -v "TOTAL" | \
+                  grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | wc -l)
+
+                if [ "$REMAINING" -eq 0 ]; then
+                  echo "✅ All deployments removed"
+                  break
+                fi
+                sleep 2
+              done
+            fi
+          fi
+
+      - name: Cleanup Packages
+        if: always()
+        working-directory: scripts
+        run: |
+          echo "🗑️ Cleaning up packages..."
+
+          K3S_PACKAGE_ID=$(sudo -E bash ./wfm-cli.sh get-package-id-by-name "${APP_PACKAGE_NAME_K3S}" 2>/dev/null | tail -n1 || echo "")
+          if [ -n "$K3S_PACKAGE_ID" ] && [ "$K3S_PACKAGE_ID" != "null" ]; then
+            sudo -E bash ./wfm-cli.sh delete-package-non-interactive "$K3S_PACKAGE_ID" || true
+          fi
+
+          DOCKER_PACKAGE_ID=$(sudo -E bash ./wfm-cli.sh get-package-id-by-name "${APP_PACKAGE_NAME_DOCKER}" 2>/dev/null | tail -n1 || echo "")
+          if [ -n "$DOCKER_PACKAGE_ID" ] && [ "$DOCKER_PACKAGE_ID" != "null" ]; then
+            sudo -E bash ./wfm-cli.sh delete-package-non-interactive "$DOCKER_PACKAGE_ID" || true
+          fi
+
+          echo "✅ Cleanup completed"

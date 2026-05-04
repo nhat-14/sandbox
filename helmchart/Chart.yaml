@@ -1,5 +1,0 @@
-apiVersion: v2
-name: workload-fleet-management-client
-description: Helm chart for Margo Device Workload Fleet management Client
-version: 0.1.0
-appVersion: "latest"

@@ -125,6 +125,22 @@ tasks:
         --set-file secrets.symphonyKey="{{.CERT_DIR}}/server-key.pem" \
         --namespace {{.HELM_NAMESPACE}}
 
+  helm-lint:
+    desc: "Lint WFM Helm chart"
+    cmds:
+      - helm lint ./chart
+
+  helm-template:
+    desc: "Render Helm templates (debug)"
+    cmds:
+      - mkdir -p .helm-output
+      - |
+        helm template {{.HELM_RELEASE_NAME}} ./chart \
+          --set symphonyApi.image="{{.IMAGE_NAME}}:{{.TAG}}" \
+          --namespace {{.HELM_NAMESPACE}} \
+          > .helm-output/rendered.yaml
+      - echo "Templates at .helm-output/rendered.yaml"
+
   helm-uninstall:
     desc: "Uninstall Symphony Helm release"
     cmds:

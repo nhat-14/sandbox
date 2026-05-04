@@ -1,3 +1,10 @@
+# ⚠️ DEPRECATED: This is a reference example only. Do NOT use this file directly.
+# The agent Taskfile generates the actual config at .local/config/config.yaml
+# with correct paths, WFM endpoints, and certificate references.
+#
+# See: poc/device/agent/Taskfile.yaml task gen-config
+# Run: task agent:gen-config or task agent:up
+#
 logging:
   # Log level (e.g., DEBUG, INFO, WARN, ERROR, FATAL)
   level: DEBUG
@@ -66,9 +73,9 @@ runtimes:
   #       certPath: null
   #       keyPath: null
 
-# Note: Auto-discovery of device capabilities is not defined and hence not implemented yet,
-# hence you are supposed to provide the details
-# in the file.
-# Path to the capabilities file (required).
+  # Note: Auto-discovery of device capabilities is not defined and hence not implemented yet,
+  # hence you are supposed to provide the details
+  # in the file.
+  # Path to the capabilities file (required).
 capabilities:
   readFromFile: ./config/capabilities.json

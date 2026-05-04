@@ -27,7 +27,7 @@ spec:
           volumeMounts:
             - name: certs
               mountPath: /usr/local/share/ca-certificates/ca-cert.pem
-              subPath: registry-ca
+              subPath: registry-ca.pem
             - name: certs
               mountPath: /certificates/
               readOnly: true
@@ -51,7 +51,7 @@ metadata:
 spec:
   type: NodePort
   selector:
-    app: symphony
+    app: symphony-api
   ports:
     - protocol: TCP
       port: 8082
