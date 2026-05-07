@@ -37,8 +37,13 @@ get_package_metadata_from_oci() {
   local temp_dir=$(mktemp -d)
   cd "$temp_dir"
 
+  local oras_scheme_flag=""
+  if [[ "${harbor_url:-}" == http://* ]]; then
+    oras_scheme_flag="--plain-http"
+  fi
+
   oras pull "${harbor_url}/${full_repo}:latest" \
-    --plain-http \
+    ${oras_scheme_flag} \
     -u "${REGISTRY_USER}:${REGISTRY_PASS}" \
     margo.yaml 2>/dev/null
 

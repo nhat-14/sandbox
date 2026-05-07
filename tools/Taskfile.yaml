@@ -6,7 +6,7 @@ vars:
 
   # Pinning versions from your script
   GO_VERSION: "{{.GO_VERSION | default \"1.24.4\"}}"
-  DOCKER_VERSION: "{{.DOCKER_VERSION | default \"28.0.0\"}}"
+  DOCKER_VERSION: "{{.DOCKER_VERSION | default \"29.0.0\"}}"
   K3S_VERSION: "{{.K3S_VERSION | default \"v1.31.4+k3s1\"}}"
   KUBECONFIG: "{{joinPath .HOME \".kube/config\"}}"
   K3S_DATA_DIR: "/etc/rancher/k3s"
@@ -21,10 +21,9 @@ tasks:
   os-check:
     silent: true
     internal: true
-    preconditions:
-      - sh: "[[ \"{{OS}}\" == \"linux\" ]] && [[ \"{{.IS_DEBIAN}}\" == \"true\" ]]"
-        msg: "❌ This Taskfile only supports Linux distributions with 'apt' (and tested
-          only on Ubuntu as of now)."
+    platforms:
+      - linux/amd64
+      - linux/arm64
 
   os-deps:
     silent: true
@@ -114,14 +113,14 @@ tasks:
     vars:
       GO_VERSION: "{{.GO_VERSION | default \"1.24.7\"}}"
       GO_BIN: "/usr/local/go/bin/go"
+      GOARCH:
+        sh: "uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'"
     status:
       - test -f {{.GO_BIN}} && {{.GO_BIN}} version | grep -q "{{.GO_VERSION}}"
-      - echo " Installation complete! Run 'export
-        PATH=\$PATH:/usr/local/go/bin' or restart your shell."
     cmds:
-      - echo " Installing Go {{.GO_VERSION}}..."
-      - curl -L https://go.dev/dl/go{{.GO_VERSION}}.linux-amd64.tar.gz | sudo
-        tar -C /usr/local -xzf -
+      - echo "Installing Go {{.GO_VERSION}} (linux/{{.GOARCH}})..."
+      - curl -L https://go.dev/dl/go{{.GO_VERSION}}.linux-{{.GOARCH}}.tar.gz |
+        sudo tar -C /usr/local -xzf -
       - |
         # NOTE: need to pin the versions of these tools
         {{.GO_BIN}} install golang.org/x/tools/gopls@latest
@@ -141,26 +140,31 @@ tasks:
   install:docker:
     desc: "Production-grade Docker install with version pinning"
     deps: [ os-check, os-deps ]
-    # BREAK: If a version exists but isn't our pinned one, stop everything.
     preconditions:
       - sh: |
-          # 1. If docker is missing, exit 0 (allow install to proceed)
+          # No docker at all -> allow install
           if ! command -v docker >/dev/null 2>&1; then
             exit 0
           fi
-          # 2. If it exists, check the version
-          CURRENT=$(docker version --format '{{"{{.Client.Version}}"}}' 2>/dev/null | head -n 1)
-          if [ "$CURRENT" != "{{.DOCKER_VERSION}}" ]; then
-            exit 1
+          CURRENT=$(docker version --format '{{.Client.Version}}' 2>/dev/null | head -n 1)
+          # Version matches -> allow (status will skip cmds)
+          if [ "$CURRENT" = "{{.DOCKER_VERSION}}" ]; then
+            exit 0
           fi
+          # Version mismatch -> block
+          exit 1
         msg: |
           ❌ VERSION CONFLICT: Found an incompatible Docker version.
           Please run 'task uninstall:docker' first to clean your system.
     # SKIP: If the version matches exactly, Task will skip this entire block.
     status:
       - |
-        CURRENT=$(docker version --format '{{"{{.Client.Version}}"}}' 2>/dev/null | head -n 1)
-        if [ "$CURRENT" == "{{.DOCKER_VERSION}}" ]; then
+        if ! command -v docker >/dev/null 2>&1; then
+          exit 1
+        fi
+        CURRENT=$(docker version --format '{{.Client.Version}}' 2>/dev/null | head -n 1)
+        if [ "$CURRENT" = "{{.DOCKER_VERSION}}" ]; then
+          echo "Docker {{.DOCKER_VERSION}} already installed - skipping."
           exit 0
         fi
         exit 1
@@ -201,8 +205,9 @@ tasks:
     cmds:
       - |
         if [ "{{.CURRENT_VERSION}}" != "none" ] && [ "{{.CURRENT_VERSION}}" != "{{.K3S_VERSION}}" ]; then
-          echo "⚠️  Version mismatch! Current: {{.CURRENT_VERSION}}, Expected: {{.K3S_VERSION}}"
-          echo "ℹ️  K3s will attempt an in-place installation/upgrade."
+          echo "WARNING: K3s {{.CURRENT_VERSION}} already installed (expected {{.K3S_VERSION}})."
+          echo "Skipping to avoid disrupting the running cluster."
+          exit 0
         fi
       - curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{.K3S_VERSION}}"
         K3S_KUBECONFIG_MODE="644" INSTALL_K3S_EXEC="server --disable traefik" sh
@@ -216,11 +221,16 @@ tasks:
 
   uninstall:gotools:
     internal: true
+    vars:
+      GOPATH_BIN:
+        sh: "/usr/local/go/bin/go env GOPATH 2>/dev/null || echo \"${HOME}/go\""
     cmds:
       - sudo rm -rf /usr/local/go
-      - rm -rf $(go env GOPATH)/bin/gopls $(go env GOPATH)/bin/dlv $(go env
-        GOPATH)/bin/golangci-lint $(go env GOPATH)/bin/yamllint  $(go env
-        GOPATH)/bin/editorconfig-checker
+      - |
+        GOBIN="{{.GOPATH_BIN}}/bin"
+        for tool in gopls dlv golangci-lint yamllint editorconfig-checker; do
+          rm -f "$GOBIN/$tool"
+        done
 
   uninstall:helm:
     internal: true
@@ -247,7 +257,7 @@ tasks:
     desc: "Remove K3s binary and cleanup files"
     preconditions:
       - sh: "test -f /usr/local/bin/k3s-uninstall.sh"
-        msg: "K3s uninstaller not found. Is K3s installed?"
+        msg: "K3s uninstaller not found. Hence skipping it."
     cmds:
       - sudo /usr/local/bin/k3s-uninstall.sh
       - rm -rf {{.KUBECONFIG}}
@@ -270,6 +280,9 @@ tasks:
   patch:k3s-dns:
     internal: true
     desc: "Inject IPs and domains into K3s CoreDNS"
+    vars:
+      REGISTRY_HOST: "{{.REGISTRY_HOST | default \"127.0.0.1\"}}"
+      WFM_HOST: "{{.WFM_HOST | default \"127.0.0.1\"}}"
     preconditions:
       - sh: test -f {{.KUBECONFIG}}
         msg: "Kubeconfig not found at {{.KUBECONFIG}}"
@@ -279,15 +292,16 @@ tasks:
         sudo KUBECONFIG={{.KUBECONFIG}} kubectl -n kube-system get configmap coredns -o yaml > .local/dns-orig.yaml
 
         # 2. Inject entries using awk after the NodeHosts reference
-        awk -v ip="{{.HARBOR_IP}}" '
+        awk -v reg_ip="{{.REGISTRY_HOST}}" -v wfm_ip="{{.WFM_HOST}}" '
         /hosts \/etc\/coredns\/NodeHosts/ {
           print $0
-          print "        " ip " registry.machine"
-          print "        " ip " symphony.machine"
+          print "        " reg_ip " registry.machine"
+          print "        " wfm_ip " symphony.machine"
           next
         }
         { print }
         ' .local/dns-orig.yaml > .local/dns-new.yaml
+
 
         # 3. Apply and Restart
         sudo KUBECONFIG={{.KUBECONFIG}} kubectl apply -f .local/dns-new.yaml

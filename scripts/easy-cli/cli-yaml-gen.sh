@@ -9,11 +9,15 @@ generate_instance_yaml_from_oci() {
 
   local harbor_url="${REGISTRY_HOST}:${REGISTRY_PORT}"
   local temp_dir=$(mktemp -d)
+  local oras_scheme_flag=""
+  if [[ "${harbor_url:-}" == http://* ]]; then
+    oras_scheme_flag="--plain-http"
+  fi
 
   cd "$temp_dir"
 
   if ! oras pull "${harbor_url}/${OCI_ORGANIZATION}/${package_name}:latest" \
-      --plain-http \
+      ${oras_scheme_flag} \
       -u "${REGISTRY_USER}:${REGISTRY_PASS}" >/dev/null 2>&1; then
     echo "❌ Failed to pull package from OCI" >&2
     cd - >/dev/null

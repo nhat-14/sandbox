@@ -110,7 +110,7 @@ if [[ -z "$1" ]]; then
   main_loop
 else
   case "$1" in
-    install) run_task setup ;;
+    install) run_task bootstrap ;;
     uninstall) run_task nuke ;;
     start) run_task wfm-server:up ;;
     stop)

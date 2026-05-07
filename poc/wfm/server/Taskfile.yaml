@@ -45,10 +45,11 @@ tasks:
 
   build:
     desc: "Build Symphony API and CLI binaries"
+    deps:
+      - setup
+      - install_rust
     dir: "{{.SRC_DIR}}"
     cmds:
-      - task: setup
-      - task: install_rust
       - cd api/pkg/apis/v1alpha1/providers/target/rust && cargo build --release
       - cd api && go build -trimpath -o {{.BIN_DIR}}/symphony-api .
       - |
@@ -101,7 +102,7 @@ tasks:
 
   down:
     desc: "Purge docker compose environment"
-    dir: "{{.WFM_DIR}}"
+    dir: "{{.SRC_DIR}}"
     cmds:
       - docker compose --profile secure down --remove-orphans || true
 
@@ -152,5 +153,4 @@ tasks:
     cmds:
       - docker compose down --remove-orphans || true
       - rm -rf {{.LOCAL_DIR}}
-      - rm -rf ${CERT_DIR}/*.{key,crt,pem,srl}
       - docker volume rm margo-redis-data || true
