@@ -6,7 +6,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
 
 create_harbor_systemd_service() {
   echo "🔧 Creating systemd service for Harbor auto-start..."
-  local harbor_dir="$HOME/sandbox/scripts/harbor"
+  local harbor_dir="$HOME/harbor/make"
 
   sudo tee /etc/systemd/system/harbor.service > /dev/null <<EOF
 [Unit]
@@ -37,7 +37,7 @@ EOF
 }
 
 configure_harbor_restart_policy() {
-  local compose_file="$HOME/sandbox/scripts/harbor/docker-compose.yml"
+  local compose_file="$HOME/harbor/make/docker-compose.yml"
 
   if [ ! -f "$compose_file" ]; then
     echo "⚠️ docker-compose.yml not found, will be generated during install"
@@ -54,17 +54,22 @@ configure_harbor_restart_policy() {
 }
 
 setup_harbor() {
+  # if [ ! -d "$HOME/harbor" ]; then
+  #   git clone https://github.com/goharbor/harbor.git "$HOME/harbor"
+  # fi
+
   if docker ps --format '{{.Names}}' | grep -q harbor; then
     echo 'Harbor is already running, stopping it first...'
-    cd "$HOME/sandbox/scripts/harbor"
+    cd "$HOME/harbor/make"
     sudo docker compose down --remove-orphans
     sleep 5
   fi
 
-  cd "$HOME/sandbox/scripts/harbor"
+  cd "$HOME/harbor/make"
 
   echo "🔐 Configuring Harbor for HTTPS-only on port ${EXPOSED_HARBOR_PORT}..."
 
+  cp $HOME/sandbox/scripts/harbor/harbor.yml harbor.yml
   cp harbor.yml harbor.yml.backup.$(date +%s) 2>/dev/null || true
 
   # Disable HTTP completely
@@ -175,6 +180,10 @@ fi
 
   configure_harbor_restart_policy
 
+  # cd "$HOME/harbor"
+  # echo 'Building and installing Harbor...'
+  # make install GOBUILDIMAGE=golang:1.26.5 COMPILETAG=compile_golangimage
+
   echo 'Starting Harbor with HTTPS-only on port '${EXPOSED_HARBOR_PORT}'...'
   sudo docker compose up -d
 
@@ -246,7 +255,7 @@ trust_harbor_certificate() {
   done
 
   echo "🔄 Restarting Harbor containers..."
-  cd "$HOME/sandbox/scripts/harbor"
+  cd "$HOME/harbor/make"
   sudo docker compose up -d
 
   echo "⏳ Waiting for Harbor to restart..."
@@ -265,12 +274,12 @@ stop_harbor_service() {
   echo "6. Stopping and removing Harbor service..."
 
   if docker ps -a --format '{{.Names}}' | grep harbor; then
-    cd "$HOME/sandbox/scripts/harbor"
+    cd "$HOME/harbor/make"
     sudo docker compose down --remove-orphans --volumes 2>/dev/null && echo "✅ Stopped Harbor containers"
     sleep 10
   fi
 
-  [ -d "$HOME/sandbox/scripts/harbor" ] && sudo rm -rf "$HOME/sandbox/scripts/harbor" && echo "✅ Removed Harbor compose directory"
+  [ -d "$HOME/harbor/make" ] && sudo rm -rf "$HOME/harbor/make" && echo "✅ Removed Harbor compose directory"
 }
 
 
@@ -278,8 +287,8 @@ stop_harbor_service() {
 configure_harbor_trust_for_k3s() {
   echo "🔐 Configuring Harbor CA trust for k3s node..."
   HOME_HARBOR_CERT="$HOME/certs/harbor.crt" #Directory where Harbor certificates are expected as pre-requisites
-  HARBOR_SANDBOX_DIR="$HOME/sandbox/scripts/harbor/certs" #Directory where Harbor sandbox certificates need to be copied. 
-  HARBOR_CERT="$HOME/sandbox/scripts/harbor/certs/harbor.crt" #Location of Harbor certificate where it needs to be placed. 
+  HARBOR_SANDBOX_DIR="$HOME/harbor/certs" #Directory where Harbor sandbox certificates need to be copied. 
+  HARBOR_CERT="$HOME/harbor/certs/harbor.crt" #Location of Harbor certificate where it needs to be placed. 
   HOST="${EXPOSED_HARBOR_HOST}"
   PORT="${EXPOSED_HARBOR_PORT}"
   CERT_DIR="/var/lib/rancher/k3s/agent/etc/containerd/certs.d/${HOST}:${PORT}"
