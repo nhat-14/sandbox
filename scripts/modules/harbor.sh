@@ -54,9 +54,9 @@ configure_harbor_restart_policy() {
 }
 
 setup_harbor() {
-  # if [ ! -d "$HOME/harbor" ]; then
-  #   git clone https://github.com/goharbor/harbor.git "$HOME/harbor"
-  # fi
+  if [ ! -d "$HOME/harbor" ]; then
+    git clone https://github.com/goharbor/harbor.git "$HOME/harbor"
+  fi
 
   if docker ps --format '{{.Names}}' | grep -q harbor; then
     echo 'Harbor is already running, stopping it first...'
@@ -180,9 +180,9 @@ fi
 
   configure_harbor_restart_policy
 
-  # cd "$HOME/harbor"
-  # echo 'Building and installing Harbor...'
-  # make install GOBUILDIMAGE=golang:1.26.5 COMPILETAG=compile_golangimage
+  cd "$HOME/harbor"
+  echo 'Building and installing Harbor...'
+  make install GOBUILDIMAGE=golang:1.26.5 COMPILETAG=compile_golangimage
 
   echo 'Starting Harbor with HTTPS-only on port '${EXPOSED_HARBOR_PORT}'...'
   sudo docker compose up -d
