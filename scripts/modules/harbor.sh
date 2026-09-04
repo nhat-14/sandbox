@@ -185,7 +185,7 @@ fi
   make install GOBUILDIMAGE=golang:1.26.5 COMPILETAG=compile_golangimage
 
   echo 'Starting Harbor with HTTPS-only on port '${EXPOSED_HARBOR_PORT}'...'
-  sudo docker compose up -d
+  # sudo docker compose up -d
 
   sleep 5
   for container in nginx registry registryctl redis harbor-jobservice harbor-core harbor-db harbor-portal harbor-log; do
