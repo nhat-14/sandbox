@@ -6,7 +6,7 @@ export PATH="$PATH:/usr/local/go/bin"
 # Load environment file
 # ----------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
+export CI="true"
 
 load_device_agent_env() {
 
@@ -100,8 +100,8 @@ GHCR_REGISTRY="ghcr.io"
 GHCR_ORG="margo"
 workload_Fleet_Management_Client_IMAGE="margo.org/workload-fleet-management-client"
 workload_Fleet_Management_Client_IMAGE_TAG="latest"
-workload_Fleet_Management_Client_IMAGE_REF="${GHCR_REGISTRY}/${GHCR_ORG}/${workload_Fleet_Management_Client_IMAGE}:${workload_Fleet_Management_Client_IMAGE_TAG}"
-
+# workload_Fleet_Management_Client_IMAGE_REF="${GHCR_REGISTRY}/${GHCR_ORG}/${workload_Fleet_Management_Client_IMAGE}:${workload_Fleet_Management_Client_IMAGE_TAG}"
+workload_Fleet_Management_Client_IMAGE_REF="workload-fleet-management-client:arm64"
 # Load shared library
 source "${SCRIPT_DIR}/lib/common.sh"
 
