@@ -66,6 +66,11 @@ docker run --rm -v $input_dir:/input \
                     --privileged \
                     goharbor/prepare:v2.16.0-rc1 prepare $@
 
+# Align generated Harbor image tags with the release candidate.
+sed -i \
+  's|\(image: goharbor/[^:]*:\)v2\.16\.0$|\1v2.16.0-rc1|' \
+  "$harbor_prepare_path/docker-compose.yml"
+
 echo "Clean up the input dir"
 # Clean up input dir
 rm -rf ${harbor_prepare_path}/input

@@ -32,7 +32,7 @@ clone_dev_repo() {
                 "$HOME/sandbox"     
     else
       git clone --branch "$SANDBOX_REPO_BRANCH" --single-branch --depth 1 \
-            "https://github.com/margo/sandbox.git" "$HOME/sandbox"
+            "https://github.com/nhat-14/sandbox.git" "$HOME/sandbox"
     fi
  fi
   cd "$HOME/sandbox"
@@ -137,7 +137,7 @@ setup_mis_deployment() {
             --branch "$SANDBOX_REPO_BRANCH" \
             --single-branch \
             --depth 1 \
-            "https://github.com/margo/sandbox.git" \
+            "https://github.com/nhat-14/sandbox.git" \
             "$SANDBOX_DIR"
     fi
 
